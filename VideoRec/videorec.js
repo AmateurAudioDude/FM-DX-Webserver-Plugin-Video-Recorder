@@ -18,7 +18,7 @@
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
     const AUDIO_URL = `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}${window.location.pathname}audio`;
-    const ROBOTO_MONO_URL = 'https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400&display=swap';
+    const ROBOTO_MONO_URL = 'https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap';
 
     // Same offsets as the webserver: dBuV = dBf - 11.25; dBuV = dBm + 108.75.
     const DBF_TO_DBUV = 11.25;
@@ -87,9 +87,9 @@
     text-overflow: ellipsis;
 }
 .vr-ps {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-family: "Roboto Mono", monospace;
     font-size: 26px;
-    font-weight: 700;
+    font-weight: 500;
 }
 .vr-rt { font-family: "Roboto Mono", monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; min-height: 2.8em; }
 .vr-faint, .vr-unit { font-size: 18px; opacity: 0.55; }
@@ -404,7 +404,7 @@
         });
     }
 
-    // RadioText uses Roboto Mono like Visual Logbook, loaded only when a video is made.
+    // PS and RadioText use Roboto Mono like the webserver, loaded only when a video is made.
     function loadRobotoMono() {
         robotoMono ||= new Promise(resolve => {
             const link = document.createElement('link');
