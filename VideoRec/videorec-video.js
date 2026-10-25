@@ -6,12 +6,8 @@
 (function () {
     'use strict';
 
+    // Quantizer and full picture interval come from createMp4's caller, see QUALITY_SETTINGS in videorec.js.
     const CODEC_CANDIDATES = ['avc1.42E01F', 'avc1.4D401F', 'avc1.64001F'];
-    // Fixed quality for the browser's encoder (H.264 quantizer 0-51, lower = better). Browsers that ignore it use
-    // VideoRec's own encoder instead, set by QP in videorec-h264.js.
-    const VIDEO_QP = 18;
-    // Full picture interval for the browser's encoder, VideoRec's encoder has its own in videorec-h264.js.
-    const KEYFRAME_INTERVAL_MS = 4000;
     const MAX_ENCODE_QUEUE = 8;
     const YIELD_INTERVAL_MS = 30;
     const MP4_EPOCH_OFFSET_S = 2082844800;
@@ -149,11 +145,11 @@
         const framerate = Math.min(30, Math.max(1, Math.round(options.frames.length / Math.max(1, durationS))));
         let config = await pickEncoderConfig(options.width, options.height, framerate);
         if (config && !(await quantizerHonoured(config, options))) config = null;
-        console.info(`[VideoRec] MP4 encoder: ${config ? `browser ${config.codec}, QP ${VIDEO_QP}` : 'VideoRec'}`);
+        console.info(`[VideoRec] MP4 encoder: ${config ? `browser ${config.codec}` : 'VideoRec'}, ${options.width}x${options.height}, QP ${options.qp}, keyframes ${options.keyframeIntervalMs} ms`);
         return config ? encodeWithWebCodecs(config, options) : encodeWithVideoRec(options);
     }
 
-    async function encodeWithWebCodecs(config, { width, height, frames, draw, onProgress, signal }) {
+    async function encodeWithWebCodecs(config, { width, height, frames, draw, onProgress, signal, qp, keyframeIntervalMs }) {
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -180,9 +176,9 @@
                 const frame = frames[i];
                 draw(ctx, frame);
                 const videoFrame = new VideoFrame(canvas, { timestamp: frame.t * 1000 });
-                const keyFrame = frame.t - lastKeyAt >= KEYFRAME_INTERVAL_MS;
+                const keyFrame = frame.t - lastKeyAt >= keyframeIntervalMs;
                 if (keyFrame) lastKeyAt = frame.t;
-                encoder.encode(videoFrame, { keyFrame, avc: { quantizer: VIDEO_QP } });
+                encoder.encode(videoFrame, { keyFrame, avc: { quantizer: qp } });
                 videoFrame.close();
                 while (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) await waitForEncoder(encoder);
                 onProgress?.((i + 1) / frames.length);
@@ -219,9 +215,9 @@
     }
 
     // Browsers without WebCodecs (plain HTTP pages) use VideoRec's own H.264 encoder.
-    async function encodeWithVideoRec({ width, height, frames, draw, onProgress, signal }) {
+    async function encodeWithVideoRec({ width, height, frames, draw, onProgress, signal, qp, keyframeIntervalMs }) {
         await loadVideoRecEncoder();
-        const encoder = window.VideoRecH264.createEncoder(width, height);
+        const encoder = window.VideoRecH264.createEncoder(width, height, { qp, keyframeIntervalMs });
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -399,12 +395,12 @@
     }
 
     // frames: [{ t (ms, first at 0, ascending) }], draw(ctx, frame) paints one frame onto the canvas.
-    async function createMp4({ width, height, frames, endMs, draw, audio, onProgress, signal, creationTime }) {
+    async function createMp4({ width, height, qp = 18, keyframeIntervalMs = 4000, frames, endMs, draw, audio, onProgress, signal, creationTime }) {
         const mp3 = parseMp3(audio);
         if (!mp3.frames.length) throw new Error('No MP3 audio found in the recording.');
         if (!frames.length || frames[0].t !== 0) throw new Error('The video needs a frame at 0 ms.');
         const audioDurationMs = Math.round(mp3.frames.length * mp3.samplesPerFrame * 1000 / mp3.sampleRate);
-        const video = await encodeVideo({ width, height, frames, draw, onProgress, signal });
+        const video = await encodeVideo({ width, height, qp, keyframeIntervalMs, frames, draw, onProgress, signal });
         return buildMp4({ width, height, video, audio: mp3, endMs: Math.max(Number(endMs) || 0, audioDurationMs), creationTime });
     }
 

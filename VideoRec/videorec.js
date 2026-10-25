@@ -12,8 +12,12 @@
 
     // Longest recording in seconds, the whole recording stays in memory until it has been made into a video.
     const MAX_RECORDING_SECONDS = 600;
-    // Video size per quality (right-click menu), Low has about half the pixels of High. Encoder settings are shared.
-    const VIDEO_SIZES = { high: [1600, 576], low: [1133, 408] };
+    // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
+    // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
+    const QUALITY_SETTINGS = {
+        high: { width: 1600, height: 576, qp: 18, keyframeIntervalMs: 4000 },
+        low: { width: 1132, height: 408, qp: 24, keyframeIntervalMs: 8000 }
+    };
     const QUALITY_KEY = 'videorec-quality';
     const SIGNAL_KEEPALIVE_MS = 1000;
     const BUTTON_ID = 'social-record-btn';
@@ -600,7 +604,8 @@
         const controller = new AbortController();
         encoding = controller;
         setButton('busy', '0%');
-        const [width, height] = VIDEO_SIZES[quality] || VIDEO_SIZES.high;
+        const settings = QUALITY_SETTINGS[quality] || QUALITY_SETTINGS.high;
+        const { width, height } = settings;
         try {
             const startedAt = rec.audioStartedAt;
             const data = {
@@ -621,6 +626,8 @@
             const blob = await window.VideoRecVideo.createMp4({
                 width,
                 height,
+                qp: settings.qp,
+                keyframeIntervalMs: settings.keyframeIntervalMs,
                 frames,
                 endMs: data.durationMs,
                 audio,
