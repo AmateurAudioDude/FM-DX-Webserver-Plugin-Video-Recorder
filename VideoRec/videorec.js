@@ -181,8 +181,15 @@
     }
 
     function notify(type, title, message) {
-        if (typeof sendToast === 'function') sendToast(type, title, message, false, false);
-        else console.log(`[VideoRec] ${title}: ${message}`);
+        if (typeof sendToast === 'function') {
+            if (navigator.userAgent.indexOf('Chrome') !== -1) {
+                sendToast(type, title, message, false, false);
+            } else {
+                sendToast(type, title, message.length > 28 ? message.slice(0, 16) + '...' + message.slice(-12) : message, false, false);
+            }
+        } else {
+            console.log(`[VideoRec] ${title}: ${message}`);
+        }
     }
 
     function onButtonClick() {
