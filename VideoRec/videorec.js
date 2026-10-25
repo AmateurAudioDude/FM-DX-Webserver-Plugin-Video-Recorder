@@ -91,7 +91,7 @@
     font-size: 26px;
     font-weight: 500;
 }
-.vr-rt { font-family: "Roboto Mono", monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; min-height: 2.8em; }
+.vr-rt { font-family: "Roboto Mono", monospace; font-size: 12px; line-height: 1.4; white-space: pre; min-height: 2.8em; }
 .vr-faint, .vr-unit { font-size: 18px; opacity: 0.55; }
 .vr-unit { font-size: 13px; }
 .vr-peak, .vr-sub { min-height: 1.2em; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
@@ -806,7 +806,7 @@
                 }),
                 labels: [...panel.querySelectorAll('.vr-label')].map(textStyle),
                 text,
-                // RadioText lines that fit in its cell, a page panel would grow for more but the video can't.
+                // RadioText lines that fit in its cell.
                 rtLines: text.rt ? Math.max(1, Math.floor((text.rt.bottom - text.rt.top) / text.rt.lineHeight + 0.01)) : 0,
                 dim: Number.isFinite(dim) ? dim : 0.2,
                 flag: flagSlot && flagsRow ? {
@@ -834,36 +834,6 @@
         let end = text.length;
         while (end > 0 && ctx.measureText(`${text.slice(0, end)}\u{2026}`).width > maxWidth) end--;
         return `${text.slice(0, end)}\u{2026}`;
-    }
-
-    // Line ranges [start, end) wrapped at spaces like CSS pre-wrap, leading spaces kept.
-    function wrapCanvasRanges(ctx, text, maxWidth) {
-        const ranges = [];
-        let start = 0;
-        while (start < text.length) {
-            let end = start;
-            let lastSpace = -1;
-            while (end < text.length && ctx.measureText(text.slice(start, end + 1)).width <= maxWidth) {
-                if (text[end] === ' ') lastSpace = end;
-                end++;
-            }
-            if (end >= text.length) {
-                ranges.push([start, text.length]);
-                break;
-            }
-            let next;
-            if (text[end] === ' ') {
-                next = end;
-            } else if (lastSpace > start) {
-                next = lastSpace;
-            } else {
-                next = Math.max(end, start + 1);
-            }
-            ranges.push([start, next]);
-            while (next < text.length && text[next] === ' ') next++;
-            start = next;
-        }
-        return ranges;
     }
 
     // Canvas has no tabular-nums, so tabular digits get slots as wide as the widest digit.
@@ -1030,20 +1000,26 @@
         const rt = t.rt;
         if (rt) {
             setLayoutFont(ctx, rt);
-            view.rt.flatMap(line => wrapCanvasRanges(ctx, line.text, rt.width).map(([start, end]) => ({ line, start, end })))
-                .slice(0, layout.rtLines)
-                .forEach(({ line, start, end }, i) => {
-                    const errorList = line.errors.split(',');
-                    let runStart = start;
-                    while (runStart < end) {
-                        const opacity = recordingCharOpacity(errorList, runStart);
-                        let runEnd = runStart + 1;
-                        while (runEnd < end && recordingCharOpacity(errorList, runEnd) === opacity) runEnd++;
-                        ctx.globalAlpha = rt.alpha * opacity;
-                        ctx.fillText(line.text.slice(runStart, runEnd), rt.left + ctx.measureText(line.text.slice(start, runStart)).width, rt.baseline + rt.lineHeight * i);
-                        runStart = runEnd;
-                    }
-                });
+            view.rt.slice(0, layout.rtLines).forEach((line, i) => {
+                const y = rt.baseline + rt.lineHeight * i;
+                // Lines don't wrap, one too wide ends in an ellipsis like the panel's text-overflow.
+                const shown = fitCanvasText(ctx, line.text, rt.width);
+                const end = shown === line.text ? line.text.length : shown.length - 1;
+                const errorList = line.errors.split(',');
+                let runStart = 0;
+                while (runStart < end) {
+                    const opacity = recordingCharOpacity(errorList, runStart);
+                    let runEnd = runStart + 1;
+                    while (runEnd < end && recordingCharOpacity(errorList, runEnd) === opacity) runEnd++;
+                    ctx.globalAlpha = rt.alpha * opacity;
+                    ctx.fillText(line.text.slice(runStart, runEnd), rt.left + ctx.measureText(line.text.slice(0, runStart)).width, y);
+                    runStart = runEnd;
+                }
+                if (end < line.text.length) {
+                    ctx.globalAlpha = rt.alpha;
+                    ctx.fillText('\u{2026}', rt.left + ctx.measureText(line.text.slice(0, end)).width, y);
+                }
+            });
         }
 
         const tx = view.tx;
