@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.0.0 by AAD
+    VideoRec v1.1.0 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -12,8 +12,9 @@
 
     // Longest recording in seconds, the whole recording stays in memory until it has been made into a video.
     const MAX_RECORDING_SECONDS = 600;
-    const VIDEO_WIDTH = 1568;
-    const VIDEO_HEIGHT = 576;
+    // Video size per quality (right-click menu), Low has about half the pixels of High. Encoder settings are shared.
+    const VIDEO_SIZES = { high: [1600, 576], low: [1133, 408] };
+    const QUALITY_KEY = 'videorec-quality';
     const SIGNAL_KEEPALIVE_MS = 1000;
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
@@ -56,7 +57,10 @@
 [hidden] { display: none !important; }
 .vr-stage { display: flex; flex-direction: column; font-family: "SF Pro Text", Arial, Helvetica, sans-serif; font-size: 16px; line-height: normal; color: #e5e7eb; }
 .vr-stage * { box-sizing: border-box; }
-.vr-header { display: flex; align-items: center; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
+.vr-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
+.vr-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-users { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vr-users-icon { font-family: "Font Awesome 6 Free"; font-weight: 900; font-style: normal; }
 .vr-body { background: #000; }
 .vr-data { display: grid; gap: 8px; padding: 12px; color: #e5e7eb; }
 .vr-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
@@ -161,9 +165,15 @@
     </div>
 </div>`;
 
+    const HEADER_HTML = `<div class="vr-header"><span class="vr-title">VideoRec</span><span class="vr-users"><i class="vr-users-icon">\u{f007}</i> <span class="vr-users-count">0</span></span></div>`;
+
     let recording = null;
     let encoding = null;
     let robotoMono = null;
+    let quality = loadQuality();
+    let tooltip = null;
+    let tooltipTimer = null;
+    let menu = null;
 
     // ---- Button ----
 
@@ -190,6 +200,124 @@
         } else {
             console.log(`[VideoRec] ${title}: ${message}`);
         }
+    }
+
+    function loadQuality() {
+        try {
+            return window.localStorage.getItem(QUALITY_KEY) === 'low' ? 'low' : 'high';
+        } catch (_error) {
+            return 'high';
+        }
+    }
+
+    function saveQuality(value) {
+        quality = value;
+        try {
+            window.localStorage.setItem(QUALITY_KEY, value);
+        } catch (_error) {}
+    }
+
+    function hideTooltip() {
+        clearTimeout(tooltipTimer);
+        if (!tooltip) return;
+        const tip = tooltip;
+        tooltip = null;
+        tip.style.opacity = '0';
+        setTimeout(() => tip.remove(), 300);
+    }
+
+    // Own tooltip like Visual Logbook's button, with the right-click hint under the action.
+    function showTooltip(button) {
+        clearTimeout(tooltipTimer);
+        tooltipTimer = setTimeout(() => {
+            const tip = document.createElement('div');
+            tip.style.cssText = 'position:fixed;z-index:1001;background:var(--color-2,#333);border:2px solid var(--color-3,#666);border-radius:15px;padding:5px 25px;pointer-events:none;white-space:nowrap;font-size:14px;color:var(--color-text,#eee);text-align:center;opacity:0;transition:opacity 0.3s ease;';
+            const title = document.createElement('div');
+            title.textContent = encoding ? 'Cancel the video' : (recording ? 'Stop video recording' : 'Start video recording');
+            const hint = document.createElement('div');
+            hint.textContent = 'Right-click for quality options';
+            hint.style.cssText = 'font-size:11px;opacity:0.6;margin-top:2px;';
+            tip.append(title, hint);
+            document.body.appendChild(tip);
+            const rect = button.getBoundingClientRect();
+            const tipRect = tip.getBoundingClientRect();
+            const left = Math.max(8, Math.min(rect.left + rect.width / 2 - tipRect.width / 2, window.innerWidth - tipRect.width - 8));
+            tip.style.left = `${left}px`;
+            tip.style.top = `${rect.bottom + 10}px`;
+            tooltip = tip;
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (tooltip === tip) tip.style.opacity = '1';
+            }));
+        }, 400);
+    }
+
+    function closeMenu() {
+        if (!menu) return;
+        menu.backdrop.remove();
+        menu.list.remove();
+        menu = null;
+    }
+
+    // Right-click menu like Visual Logbook's. A transparent backdrop closes it, so nothing listens page-wide.
+    function openMenu(x, y) {
+        closeMenu();
+        const backdrop = document.createElement('div');
+        backdrop.style.cssText = 'position:fixed;inset:0;z-index:1001;';
+        const closeFromBackdrop = event => {
+            event.preventDefault();
+            closeMenu();
+        };
+        backdrop.addEventListener('click', closeFromBackdrop);
+        backdrop.addEventListener('contextmenu', closeFromBackdrop);
+
+        const list = document.createElement('div');
+        list.tabIndex = -1;
+        list.style.cssText = [
+            'position:fixed',
+            'z-index:1002',
+            'background:var(--color-1,#1a1a2e)',
+            'border:1px solid var(--color-2,#444)',
+            'border-radius:8px',
+            'padding:4px 0',
+            'min-width:180px',
+            'box-shadow:0 4px 16px rgba(0,0,0,0.4)',
+            'user-select:none',
+            'font-size:13px',
+            'outline:none'
+        ].join(';');
+        [['high', 'High Quality'], ['low', 'Low Quality']].forEach(([value, label]) => {
+            const current = value === quality;
+            const item = document.createElement('div');
+            item.style.cssText = 'padding:8px 14px;cursor:pointer;color:var(--color-5,#eee);white-space:nowrap;display:flex;align-items:center;gap:8px;';
+            if (current) {
+                item.style.fontWeight = '600';
+                item.style.color = 'var(--color-main-bright,#38bdf8)';
+            }
+            const check = document.createElement('span');
+            check.style.cssText = 'width:14px;flex:0 0 auto;font-size:11px;';
+            check.textContent = current ? '\u{2714}' : '';
+            const text = document.createElement('span');
+            text.textContent = label;
+            item.append(check, text);
+            item.addEventListener('mouseenter', () => { item.style.background = 'var(--color-2,#333)'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; });
+            item.addEventListener('click', () => {
+                saveQuality(value);
+                closeMenu();
+            });
+            list.appendChild(item);
+        });
+        list.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeMenu();
+        });
+        list.addEventListener('contextmenu', event => event.preventDefault());
+
+        document.body.append(backdrop, list);
+        const rect = list.getBoundingClientRect();
+        list.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+        list.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+        list.focus();
+        menu = { backdrop, list };
     }
 
     function onButtonClick() {
@@ -332,10 +460,11 @@
             data.freq, data.pi, data.ps, data.ps_errors, data.rt0, data.rt1, data.rt0_errors, data.rt1_errors,
             data.pty, data.tp, data.ta, data.ms, data.ecc, data.country_iso,
             txInfo.tx, txInfo.city, txInfo.itu, txInfo.erp, txInfo.pol, txInfo.dist, txInfo.azi, txInfo.reg, txInfo.pi,
-            tuner.ant, tuner.bw
+            tuner.ant, tuner.bw, data.users
         ].join('\u0001');
         if (rdsKey === rec.lastRdsKey) return;
         rec.lastRdsKey = rdsKey;
+        const users = Number.parseInt(data.users, 10);
         const pty = Number.parseInt(data.pty, 10);
         const ms = Number.parseInt(data.ms, 10);
         const ecc = Number.parseInt(data.ecc, 10);
@@ -370,7 +499,8 @@
             // Station matched by its regional PI, the webserver then shows the regular PI too.
             regularPi: txInfo.reg === true ? String(txInfo.pi || '') : '',
             ant: tuner.ant,
-            bw: tuner.bw
+            bw: tuner.bw,
+            users: Number.isFinite(users) ? users : null
         });
     }
 
@@ -470,6 +600,7 @@
         const controller = new AbortController();
         encoding = controller;
         setButton('busy', '0%');
+        const [width, height] = VIDEO_SIZES[quality] || VIDEO_SIZES.high;
         try {
             const startedAt = rec.audioStartedAt;
             const data = {
@@ -485,11 +616,11 @@
                 loadRobotoMono()
             ]);
             if (controller.signal.aborted) return;
-            const layout = await measureRecordingVideoLayout(VIDEO_WIDTH / VIDEO_HEIGHT);
+            const layout = await measureRecordingVideoLayout(width / height);
             if (controller.signal.aborted) return;
             const blob = await window.VideoRecVideo.createMp4({
-                width: VIDEO_WIDTH,
-                height: VIDEO_HEIGHT,
+                width,
+                height,
                 frames,
                 endMs: data.durationMs,
                 audio,
@@ -609,6 +740,7 @@
         const tx = rds?.tx || null;
         return {
             title: [tx?.name, Number.isFinite(rds?.f) ? rds.f.toFixed(2) : ''].filter(Boolean).join(' \u{00B7} '),
+            users: Number.isFinite(rds?.users) ? String(rds.users) : '',
             signal: Number.isFinite(sigDbf) ? formatRecordingSignalParts(sigDbf, unit) : { int: '-', dec: '', unit: '' },
             peak: Number.isFinite(peak) ? `\u{2191} ${formatSignalValue(peak - DBF_TO_DBUV, unit)}` : '',
             cci: quality(sig?.[2]),
@@ -684,10 +816,10 @@
         const host = document.createElement('div');
         host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
         const root = host.attachShadow({ mode: 'open' });
-        root.innerHTML = `<style>${PANEL_CSS}</style><div class="vr-stage"><div class="vr-header"><span>VideoRec</span></div><div class="vr-body">${PANEL_HTML}</div></div>`;
+        root.innerHTML = `<style>${PANEL_CSS}</style><div class="vr-stage">${HEADER_HTML}<div class="vr-body">${PANEL_HTML}</div></div>`;
         const stage = root.querySelector('.vr-stage');
         const header = root.querySelector('.vr-header');
-        const titleEl = header.firstElementChild;
+        const titleEl = header.querySelector('.vr-title');
         const body = root.querySelector('.vr-body');
         const panel = root.querySelector('.vr-data');
         // Placeholder text, so every line takes its space.
@@ -757,6 +889,7 @@
                     tabular: String(style.fontVariantNumeric || '').includes('tabular-nums'),
                     baseline,
                     left: own.x,
+                    right: own.x + own.w,
                     top: own.y,
                     width: own.w,
                     lineHeight: px(style.lineHeight) || px(style.fontSize) * 1.2,
@@ -797,6 +930,9 @@
             const flagSlot = flagImg?.parentElement;
             const flagsRow = panel.querySelector('.vr-flags');
             const headerStyle = getComputedStyle(header);
+            const title = textStyle(titleEl);
+            // The title shares the header with the listener count, so it is cut off at its own width.
+            if (title) title.maxWidth = title.width;
             return {
                 height: stage.getBoundingClientRect().height,
                 background: getComputedStyle(body).backgroundColor,
@@ -806,7 +942,12 @@
                     border: px(headerStyle.borderBottomWidth),
                     borderColor: headerStyle.borderBottomColor
                 },
-                title: textStyle(titleEl),
+                title,
+                users: {
+                    line: textStyle(header.querySelector('.vr-users')),
+                    icon: textStyle(header.querySelector('.vr-users-icon')),
+                    count: textStyle(header.querySelector('.vr-users-count'))
+                },
                 cells: [...panel.querySelectorAll('.vr-cell')].map(cell => {
                     const s = getComputedStyle(cell);
                     return { ...box(cell), radius: px(s.borderTopLeftRadius), background: s.backgroundColor, border: px(s.borderTopWidth), borderColor: s.borderTopColor };
@@ -893,15 +1034,16 @@
         fillCanvasText(ctx, shown, x, style.baseline, style.tabular);
     }
 
-    // Runs [[style, text]] centred together on the line's baseline, like spans sharing one line.
-    function drawLayoutRuns(ctx, line, runs) {
+    // Runs [[style, text]] centred (or right-aligned) together on the line's baseline, like spans sharing one line.
+    function drawLayoutRuns(ctx, line, runs, align = 'center') {
         if (!line) return;
         const parts = runs.filter(([style, text]) => style && text);
         const widths = parts.map(([style, text]) => {
             setLayoutFont(ctx, style);
             return measureCanvasText(ctx, text, style.tabular);
         });
-        let x = line.center - widths.reduce((sum, width) => sum + width, 0) / 2;
+        const total = widths.reduce((sum, width) => sum + width, 0);
+        let x = align === 'right' ? line.right - total : line.center - total / 2;
         parts.forEach(([style, text], i) => {
             setLayoutFont(ctx, style);
             fillCanvasText(ctx, text, x, line.baseline, style.tabular);
@@ -934,6 +1076,10 @@
         ctx.fillStyle = header.borderColor;
         ctx.fillRect(0, header.h - header.border, width, header.border);
         drawLayoutText(ctx, layout.title, view.title, 'left');
+        if (view.users) {
+            const users = layout.users;
+            drawLayoutRuns(ctx, users.line, [[users.icon, users.icon?.text], [users.line, ' '], [users.count, view.users]], 'right');
+        }
 
         ctx.globalAlpha = 1;
         layout.cells.forEach(cell => {
@@ -1051,14 +1197,31 @@
             else console.error('[VideoRec] addIconToPluginPanel not found after 10 seconds.');
             return;
         }
-        addIconToPluginPanel(BUTTON_ID, 'Video', 'solid', 'video', 'Start video recording');
+        addIconToPluginPanel(BUTTON_ID, 'Video', 'solid', 'video', '');
         const style = document.createElement('style');
         style.textContent = BUTTON_CSS;
         document.head.appendChild(style);
         const bind = (tries = 0) => {
             const button = document.getElementById(BUTTON_ID);
-            if (button) button.addEventListener('click', onButtonClick);
-            else if (tries < 50) setTimeout(() => bind(tries + 1), 100);
+            if (!button) {
+                if (tries < 50) setTimeout(() => bind(tries + 1), 100);
+                return;
+            }
+            // The webserver's tooltip is replaced by our own, which also mentions the right-click menu.
+            if (typeof $ === 'function') $(button).off('mouseenter mouseleave focusin focusout');
+            button.addEventListener('click', () => {
+                hideTooltip();
+                onButtonClick();
+            });
+            button.addEventListener('mouseenter', () => {
+                if (window.matchMedia('(hover: hover)').matches) showTooltip(button);
+            });
+            button.addEventListener('mouseleave', hideTooltip);
+            button.addEventListener('contextmenu', event => {
+                event.preventDefault();
+                hideTooltip();
+                openMenu(event.clientX, event.clientY);
+            });
         };
         bind();
     }
