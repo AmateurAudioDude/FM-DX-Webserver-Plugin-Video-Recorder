@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.1.0 by AAD
+    VideoRec v1.1.1 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -19,6 +19,7 @@
         low: { width: 1132, height: 408, qp: 24, keyframeIntervalMs: 8000 }
     };
     const QUALITY_KEY = 'videorec-quality';
+    const TIMESTAMP_KEY = 'videorec-timestamp';
     const SIGNAL_KEEPALIVE_MS = 1000;
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
@@ -61,8 +62,9 @@
 [hidden] { display: none !important; }
 .vr-stage { display: flex; flex-direction: column; font-family: "SF Pro Text", Arial, Helvetica, sans-serif; font-size: 16px; line-height: normal; color: #e5e7eb; }
 .vr-stage * { box-sizing: border-box; }
-.vr-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
+.vr-header { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
 .vr-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-time { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users-icon { font-family: "Font Awesome 6 Free"; font-weight: 900; font-style: normal; }
 .vr-body { background: #000; }
@@ -169,12 +171,13 @@
     </div>
 </div>`;
 
-    const HEADER_HTML = `<div class="vr-header"><span class="vr-title">VideoRec</span><span class="vr-users"><i class="vr-users-icon">\u{f007}</i> <span class="vr-users-count">0</span></span></div>`;
+    const HEADER_HTML = `<div class="vr-header"><span class="vr-title">VideoRec</span><span class="vr-time">0</span><span class="vr-users"><i class="vr-users-icon">\u{f007}</i> <span class="vr-users-count">0</span></span></div>`;
 
     let recording = null;
     let encoding = null;
     let robotoMono = null;
     let quality = loadQuality();
+    let includeTimestamp = loadTimestamp();
     let tooltip = null;
     let tooltipTimer = null;
     let menu = null;
@@ -221,6 +224,21 @@
         } catch (_error) {}
     }
 
+    function loadTimestamp() {
+        try {
+            return window.localStorage.getItem(TIMESTAMP_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveTimestamp(value) {
+        includeTimestamp = value;
+        try {
+            window.localStorage.setItem(TIMESTAMP_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
     function hideTooltip() {
         clearTimeout(tooltipTimer);
         if (!tooltip) return;
@@ -239,7 +257,7 @@
             const title = document.createElement('div');
             title.textContent = encoding ? 'Cancel the video' : (recording ? 'Stop video recording' : 'Start video recording');
             const hint = document.createElement('div');
-            hint.textContent = 'Right-click for quality options';
+            hint.textContent = 'Right-click for video options';
             hint.style.cssText = 'font-size:11px;opacity:0.6;margin-top:2px;';
             tip.append(title, hint);
             document.body.appendChild(tip);
@@ -289,24 +307,26 @@
             'font-size:13px',
             'outline:none'
         ].join(';');
-        [['high', 'High Quality'], ['low', 'Low Quality']].forEach(([value, label]) => {
-            const current = value === quality;
+        [
+            ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
+            ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
+        ].forEach(([label, on, toggle]) => {
             const item = document.createElement('div');
             item.style.cssText = 'padding:8px 14px;cursor:pointer;color:var(--color-5,#eee);white-space:nowrap;display:flex;align-items:center;gap:8px;';
-            if (current) {
+            if (on) {
                 item.style.fontWeight = '600';
                 item.style.color = 'var(--color-main-bright,#38bdf8)';
             }
             const check = document.createElement('span');
             check.style.cssText = 'width:14px;flex:0 0 auto;font-size:11px;';
-            check.textContent = current ? '\u{2714}' : '';
+            check.textContent = on ? '\u{2714}' : '';
             const text = document.createElement('span');
             text.textContent = label;
             item.append(check, text);
             item.addEventListener('mouseenter', () => { item.style.background = 'var(--color-2,#333)'; });
             item.addEventListener('mouseleave', () => { item.style.background = ''; });
             item.addEventListener('click', () => {
-                saveQuality(value);
+                toggle();
                 closeMenu();
             });
             list.appendChild(item);
@@ -337,6 +357,11 @@
     }
 
     // ---- Recording ----
+
+    // UTC, like the filename.
+    function formatTimestamp(ms) {
+        return `${new Date(ms).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+    }
 
     function videoFilename() {
         const time = new Date().toISOString().slice(0, 19).replaceAll(':', '').replace('T', '_');
@@ -606,14 +631,16 @@
         setButton('busy', '0%');
         const settings = QUALITY_SETTINGS[quality] || QUALITY_SETTINGS.high;
         const { width, height } = settings;
+        const timestampAt = includeTimestamp ? formatTimestamp : null;
         try {
             const startedAt = rec.audioStartedAt;
             const data = {
+                startedAt,
                 durationMs: Math.max(0, stoppedAt - startedAt),
                 signal: sliceSamples(rec.signal, startedAt, stoppedAt, sample => sample[0], (sample, offset) => [offset, ...sample.slice(1)]),
                 rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset }))
             };
-            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit());
+            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt);
             const [audio, flags] = await Promise.all([
                 new Blob(rec.audio).arrayBuffer(),
                 loadRecordingVideoFlags(frames),
@@ -780,15 +807,20 @@
         };
     }
 
-    function buildRecordingVideoFrames(data, peaks, ptyNames, unit) {
+    // timestampAt(ms since 1970), when given, adds each frame's time as view.time.
+    function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null) {
         const end = Math.max(0, Number(data.durationMs) || 0);
+        const withTime = typeof timestampAt === 'function' && Number.isFinite(data.startedAt);
         const times = new Set([0]);
         (data.signal || []).forEach(sample => times.add(Math.round(sample[0])));
         (data.rds || []).forEach(sample => times.add(Math.round(sample.t)));
+        // A frame on every whole second too, so the timestamp ticks with the clock.
+        if (withTime) for (let t = 1000 - (data.startedAt % 1000); t < end; t += 1000) times.add(t);
         const frames = [];
         let lastKey = null;
         [...times].filter(t => t === 0 || (t > 0 && t < end)).sort((a, b) => a - b).forEach(t => {
             const view = getRecordingView(data, peaks, ptyNames, unit, t);
+            if (withTime) view.time = timestampAt(data.startedAt + t);
             const key = JSON.stringify(view);
             if (key === lastKey) return;
             lastKey = key;
@@ -827,6 +859,7 @@
         const stage = root.querySelector('.vr-stage');
         const header = root.querySelector('.vr-header');
         const titleEl = header.querySelector('.vr-title');
+        const timeEl = header.querySelector('.vr-time');
         const body = root.querySelector('.vr-body');
         const panel = root.querySelector('.vr-data');
         // Placeholder text, so every line takes its space.
@@ -947,9 +980,11 @@
                     h: box(header).h,
                     background: headerStyle.backgroundColor,
                     border: px(headerStyle.borderBottomWidth),
-                    borderColor: headerStyle.borderBottomColor
+                    borderColor: headerStyle.borderBottomColor,
+                    gap: px(headerStyle.columnGap)
                 },
                 title,
+                time: textStyle(timeEl),
                 users: {
                     line: textStyle(header.querySelector('.vr-users')),
                     icon: textStyle(header.querySelector('.vr-users-icon')),
@@ -1082,7 +1117,15 @@
         ctx.fillRect(0, 0, width, header.h);
         ctx.fillStyle = header.borderColor;
         ctx.fillRect(0, header.h - header.border, width, header.border);
-        drawLayoutText(ctx, layout.title, view.title, 'left');
+        let title = layout.title;
+        if (view.time && layout.time) {
+            setLayoutFont(ctx, layout.time);
+            const timeLeft = layout.time.center - measureCanvasText(ctx, view.time, layout.time.tabular) / 2;
+            // The title stops short of the centred timestamp.
+            if (title) title = { ...title, maxWidth: Math.min(title.maxWidth, timeLeft - header.gap - title.left) };
+            drawLayoutText(ctx, layout.time, view.time);
+        }
+        drawLayoutText(ctx, title, view.title, 'left');
         if (view.users) {
             const users = layout.users;
             drawLayoutRuns(ctx, users.line, [[users.icon, users.icon?.text], [users.line, ' '], [users.count, view.users]], 'right');
