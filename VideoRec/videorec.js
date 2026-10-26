@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.1.1 by AAD
+    VideoRec v1.1.2 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -15,8 +15,8 @@
     // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
     // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
     const QUALITY_SETTINGS = {
-        high: { width: 1600, height: 576, qp: 18, keyframeIntervalMs: 4000 },
-        low: { width: 1132, height: 408, qp: 24, keyframeIntervalMs: 8000 }
+        high: { width: 1344, height: 576, qp: 18, keyframeIntervalMs: 4000 },
+        low: { width: 952, height: 408, qp: 24, keyframeIntervalMs: 8000 }
     };
     const QUALITY_KEY = 'videorec-quality';
     const TIMESTAMP_KEY = 'videorec-timestamp';
@@ -101,7 +101,7 @@
     font-size: 26px;
     font-weight: 500;
 }
-.vr-rt { font-family: "Roboto Mono", monospace; font-size: 12px; line-height: 1.4; white-space: pre; min-height: 2.8em; }
+.vr-rt { font-family: "Roboto Mono", monospace; font-size: 10px; line-height: 1.4; white-space: pre; min-height: 3.4em; }
 .vr-faint, .vr-unit { font-size: 18px; opacity: 0.55; }
 .vr-unit { font-size: 13px; }
 .vr-peak, .vr-sub { min-height: 1.2em; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
