@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.1.2 by AAD
+    VideoRec v1.2.0 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -12,6 +12,9 @@
 
     // Longest recording in seconds, the whole recording stays in memory until it has been made into a video.
     const MAX_RECORDING_SECONDS = 600;
+    // Pre-roll: the audio stays connected, so a recording starts up to PRE_ROLL_SECONDS before the button was pressed.
+    const PRE_ROLL_ENABLED = true;
+    const PRE_ROLL_SECONDS = 15;
     // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
     // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
     const QUALITY_SETTINGS = {
@@ -20,13 +23,15 @@
     };
     const QUALITY_KEY = 'videorec-quality';
     const TIMESTAMP_KEY = 'videorec-timestamp';
+    const PRE_ROLL_KEY = 'videorec-preroll';
+    const PRE_ROLL_RETRY_MS = 5000;
     const SIGNAL_KEEPALIVE_MS = 1000;
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
     const AUDIO_URL = `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}${window.location.pathname}audio`;
     const ROBOTO_MONO_URL = 'https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap';
 
-    // Same offsets as the webserver: dBuV = dBf - 11.25; dBuV = dBm + 108.75.
+    // Same offsets as the webserver: dBuV = dBf - 11.25, dBuV = dBm + 108.75.
     const DBF_TO_DBUV = 11.25;
     const MICRO_SIGN = String.fromCharCode(181);
     // S-meter reference for VHF/FM: S9 = -93 dBm, 6 dB per S-unit below it.
@@ -55,8 +60,7 @@
 #${BUTTON_ID}.vr-active i { animation: vr-blink 2s step-start 0s infinite; }
 #${BUTTON_ID}.vr-active:hover i { color: var(--color-4); }`;
 
-    // The video's look, the same panel as Visual Logbook's recordings. The video is measured from this CSS, so
-    // changes here show up in the next video without touching the drawing code.
+    // The video is measured from this CSS.
     const PANEL_CSS = `
 :host { all: initial; }
 [hidden] { display: none !important; }
@@ -178,6 +182,9 @@
     let robotoMono = null;
     let quality = loadQuality();
     let includeTimestamp = loadTimestamp();
+    let preRollOn = loadPreRoll();
+    let preRoll = null;
+    let preRollRetry = 0;
     let tooltip = null;
     let tooltipTimer = null;
     let menu = null;
@@ -239,6 +246,23 @@
         } catch (_error) {}
     }
 
+    function loadPreRoll() {
+        try {
+            return window.localStorage.getItem(PRE_ROLL_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function savePreRoll(value) {
+        preRollOn = value;
+        try {
+            window.localStorage.setItem(PRE_ROLL_KEY, value ? '1' : '0');
+        } catch (_error) {}
+        if (value) startPreRoll();
+        else stopPreRoll();
+    }
+
     function hideTooltip() {
         clearTimeout(tooltipTimer);
         if (!tooltip) return;
@@ -248,7 +272,6 @@
         setTimeout(() => tip.remove(), 300);
     }
 
-    // Own tooltip like Visual Logbook's button, with the right-click hint under the action.
     function showTooltip(button) {
         clearTimeout(tooltipTimer);
         tooltipTimer = setTimeout(() => {
@@ -280,7 +303,7 @@
         menu = null;
     }
 
-    // Right-click menu like Visual Logbook's. A transparent backdrop closes it, so nothing listens page-wide.
+    // A backdrop closes it, so nothing listens page-wide.
     function openMenu(x, y) {
         closeMenu();
         const backdrop = document.createElement('div');
@@ -307,10 +330,12 @@
             'font-size:13px',
             'outline:none'
         ].join(';');
-        [
+        const items = [
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
             ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
-        ].forEach(([label, on, toggle]) => {
+        ];
+        if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} s)`, preRollOn, () => savePreRoll(!preRollOn)]);
+        items.forEach(([label, on, toggle]) => {
             const item = document.createElement('div');
             item.style.cssText = 'padding:8px 14px;cursor:pointer;color:var(--color-5,#eee);white-space:nowrap;display:flex;align-items:center;gap:8px;';
             if (on) {
@@ -369,21 +394,19 @@
         return `Video_${time}z${Number.isFinite(freq) ? `_${Math.round(freq * 1000)}kHz` : ''}.mp4`;
     }
 
-    function startRecording() {
+    // keepMs: pre-roll length, 0 keeps everything.
+    function openCapture(keepMs) {
         let audioSocket;
         try {
             audioSocket = new WebSocket(AUDIO_URL);
         } catch (_error) {
-            notify('error', 'Video recording failed', 'Could not connect to the audio stream.');
-            return;
+            return null;
         }
         audioSocket.binaryType = 'arraybuffer';
-        const rec = {
-            filename: videoFilename(),
-            pressedAt: Date.now(),
+        const cap = {
+            keepMs,
             audioSocket,
             audio: [],
-            audioStartedAt: 0,
             signal: [],
             rds: [],
             lastSigRaw: null,
@@ -391,22 +414,91 @@
             lastRdsKey: null,
             dataSocket: null,
             onData: null,
+            onClose: null,
+            closed: false,
             ticker: 0,
             limit: 0
         };
-        rec.onData = event => recordData(rec, event);
-        recording = rec;
+        cap.onData = event => recordData(cap, event);
         audioSocket.addEventListener('open', () => audioSocket.send(JSON.stringify({ type: 'fallback', data: 'mp3' })));
         audioSocket.addEventListener('message', event => {
-            if (recording !== rec || !(event.data instanceof ArrayBuffer)) return;
-            if (!rec.audioStartedAt) rec.audioStartedAt = Date.now();
-            rec.audio.push(event.data);
+            if (cap.closed || !(event.data instanceof ArrayBuffer)) return;
+            const now = Date.now();
+            cap.audio.push([now, event.data]);
+            if (cap.keepMs) trimCapture(cap, now - cap.keepMs);
         });
         audioSocket.addEventListener('close', () => {
-            if (recording === rec) stopRecording(['warning', 'The audio stream closed, so the recording was stopped.']);
+            if (!cap.closed) cap.onClose?.();
         });
-        attachDataSocket(rec);
-        // The page replaces its data socket when it reconnects, so follow it.
+        attachDataSocket(cap);
+        return cap;
+    }
+
+    function closeCapture(cap) {
+        cap.closed = true;
+        clearInterval(cap.ticker);
+        clearTimeout(cap.limit);
+        cap.dataSocket?.removeEventListener('message', cap.onData);
+        try {
+            cap.audioSocket.close();
+        } catch (_error) {}
+    }
+
+    // The last data sample before cutoff is kept as the starting state.
+    function trimCapture(cap, cutoff) {
+        let audio = 0;
+        while (audio < cap.audio.length && cap.audio[audio][0] < cutoff) audio++;
+        if (audio) cap.audio.splice(0, audio);
+        [[cap.signal, sample => sample[0]], [cap.rds, sample => sample.t]].forEach(([list, timeOf]) => {
+            let drop = 0;
+            while (drop + 1 < list.length && timeOf(list[drop + 1]) <= cutoff) drop++;
+            if (drop) list.splice(0, drop);
+        });
+    }
+
+    function startPreRoll() {
+        clearTimeout(preRollRetry);
+        if (!PRE_ROLL_ENABLED || !preRollOn || preRoll || recording) return;
+        const cap = openCapture(PRE_ROLL_SECONDS * 1000);
+        if (!cap) return;
+        cap.onClose = () => {
+            closeCapture(cap);
+            if (preRoll === cap) preRoll = null;
+            preRollRetry = setTimeout(startPreRoll, PRE_ROLL_RETRY_MS);
+        };
+        cap.ticker = setInterval(() => attachDataSocket(cap), 1000);
+        preRoll = cap;
+    }
+
+    function stopPreRoll() {
+        clearTimeout(preRollRetry);
+        if (!preRoll) return;
+        closeCapture(preRoll);
+        preRoll = null;
+    }
+
+    function startRecording() {
+        let rec = preRoll;
+        preRoll = null;
+        clearTimeout(preRollRetry);
+        if (rec) {
+            clearInterval(rec.ticker);
+            trimCapture(rec, Date.now() - rec.keepMs);
+            rec.keepMs = 0;
+        } else {
+            rec = openCapture(0);
+            if (!rec) {
+                notify('error', 'Video recording failed', 'Could not connect to the audio stream.');
+                return;
+            }
+        }
+        rec.filename = videoFilename();
+        rec.pressedAt = Date.now();
+        rec.onClose = () => {
+            if (recording === rec) stopRecording(['warning', 'The audio stream closed, so the recording was stopped.']);
+        };
+        recording = rec;
+        // The page replaces its data socket on reconnect.
         rec.ticker = setInterval(() => {
             attachDataSocket(rec);
             setButton('active', formatElapsed(Date.now() - rec.pressedAt));
@@ -430,14 +522,10 @@
         const rec = recording;
         if (!rec) return;
         recording = null;
-        clearInterval(rec.ticker);
-        clearTimeout(rec.limit);
-        rec.dataSocket?.removeEventListener('message', rec.onData);
-        try {
-            rec.audioSocket.close();
-        } catch (_error) {}
+        closeCapture(rec);
         if (notice && rec.audio.length) notify(notice[0], 'Video recording', notice[1]);
         makeVideo(rec, Date.now());
+        startPreRoll();
     }
 
     function parseQuality(value) {
@@ -445,7 +533,6 @@
         return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
     }
 
-    // The antenna and bandwidth as the page's own dropdowns show them, empty when the server hides that control.
     function readTunerSetup() {
         const ant = document.querySelector('.data-ant input');
         const bw = document.querySelector('.data-bw input');
@@ -455,9 +542,9 @@
         };
     }
 
-    // Same samples as Visual Logbook's auto-recorder: signal on change (or every second), RDS and TX on change.
+    // Same sample format as Visual Logbook's recorder.
     function recordData(rec, event) {
-        if (recording !== rec || typeof event.data !== 'string' || event.data[0] !== '{') return;
+        if (rec.closed || typeof event.data !== 'string' || event.data[0] !== '{') return;
         let data;
         try {
             data = JSON.parse(event.data);
@@ -525,7 +612,7 @@
                 dist: Number.isFinite(dist) ? dist : null,
                 azi: Number.isFinite(azi) ? azi : null
             } : null,
-            // Station matched by its regional PI, the webserver then shows the regular PI too.
+            // Matched by regional PI.
             regularPi: txInfo.reg === true ? String(txInfo.pi || '') : '',
             ant: tuner.ant,
             bw: tuner.bw,
@@ -533,7 +620,7 @@
         });
     }
 
-    // Samples from startedAt to endTime with times relative to startedAt, the last earlier one becomes the one at 0.
+    // The last sample before startedAt becomes the one at 0.
     function sliceSamples(list, startedAt, endTime, timeOf, toRecord) {
         const out = [];
         let initial = null;
@@ -570,7 +657,6 @@
         });
     }
 
-    // PS and RadioText use Roboto Mono like the webserver, loaded only when a video is made.
     function loadRobotoMono() {
         robotoMono ||= new Promise(resolve => {
             const link = document.createElement('link');
@@ -592,7 +678,6 @@
         }
     }
 
-    // The webserver's own signal unit setting, dBf when it isn't set.
     function getSignalUnit() {
         try {
             const unit = window.localStorage.getItem('signalUnit');
@@ -621,7 +706,7 @@
     }
 
     async function makeVideo(rec, stoppedAt) {
-        if (!rec.audioStartedAt || !rec.audio.length) {
+        if (!rec.audio.length) {
             setButton('idle');
             notify('error', 'Video recording failed', 'No audio was received from the server.');
             return;
@@ -633,7 +718,7 @@
         const { width, height } = settings;
         const timestampAt = includeTimestamp ? formatTimestamp : null;
         try {
-            const startedAt = rec.audioStartedAt;
+            const startedAt = rec.audio[0][0];
             const data = {
                 startedAt,
                 durationMs: Math.max(0, stoppedAt - startedAt),
@@ -642,7 +727,7 @@
             };
             const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt);
             const [audio, flags] = await Promise.all([
-                new Blob(rec.audio).arrayBuffer(),
+                new Blob(rec.audio.map(([, data]) => data)).arrayBuffer(),
                 loadRecordingVideoFlags(frames),
                 loadScript(`${SCRIPT_BASE}videorec-video.js`, () => window.VideoRecVideo),
                 loadRobotoMono()
@@ -678,7 +763,7 @@
         }
     }
 
-    // ---- Recording data to panel views (shared logic with Visual Logbook) ----
+    // ---- Panel views (shared with Visual Logbook) ----
 
     function findRecordingIndex(list, offsetMs, getTime) {
         if (!Array.isArray(list) || !list.length) return -1;
@@ -697,7 +782,7 @@
         return found;
     }
 
-    // Running peak per signal sample, reset whenever the recorded frequency changes.
+    // Resets on frequency change.
     function computeRecordingPeaks(data) {
         const signal = Array.isArray(data?.signal) ? data.signal : [];
         const rds = Array.isArray(data?.rds) ? data.rds : [];
@@ -754,13 +839,12 @@
         return { int: text.slice(0, dot), dec: text.slice(dot), unit: label };
     }
 
-    // Same per-character dimming as the webserver's processString(): opacity drops as the error count rises.
+    // Same dimming as the webserver's processString().
     function recordingCharOpacity(errorList, index) {
         const alpha = Number.parseInt(errorList[index], 10) * (50 / 11);
         return alpha ? Math.max(0, 70 - alpha) / 100 : 1;
     }
 
-    // What the panel shows at a point in the recording.
     function getRecordingView(data, peaks, ptyNames, unit, offsetMs) {
         const sigIndex = findRecordingIndex(data.signal, offsetMs, sample => sample[0]);
         const rdsIndex = findRecordingIndex(data.rds, offsetMs, sample => sample.t);
@@ -807,14 +891,13 @@
         };
     }
 
-    // timestampAt(ms since 1970), when given, adds each frame's time as view.time.
     function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null) {
         const end = Math.max(0, Number(data.durationMs) || 0);
         const withTime = typeof timestampAt === 'function' && Number.isFinite(data.startedAt);
         const times = new Set([0]);
         (data.signal || []).forEach(sample => times.add(Math.round(sample[0])));
         (data.rds || []).forEach(sample => times.add(Math.round(sample.t)));
-        // A frame on every whole second too, so the timestamp ticks with the clock.
+        // Whole seconds, so the timestamp ticks.
         if (withTime) for (let t = 1000 - (data.startedAt % 1000); t < end; t += 1000) times.add(t);
         const frames = [];
         let lastKey = null;
@@ -843,14 +926,13 @@
         return flags;
     }
 
-    // ---- Layout measured from PANEL_CSS, then drawn per frame ----
+    // ---- Layout and drawing ----
 
     function canvasFontOf(style) {
         return `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     }
 
-    // A hidden copy of the header and panel (in a shadow root, so the page's CSS can't reach it) is laid out at the
-    // video's aspect ratio, then every box, font, colour, opacity and baseline is measured once.
+    // Shadow root, so the page's CSS can't reach it.
     async function measureRecordingVideoLayout(aspect) {
         const host = document.createElement('div');
         host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
@@ -862,7 +944,7 @@
         const timeEl = header.querySelector('.vr-time');
         const body = root.querySelector('.vr-body');
         const panel = root.querySelector('.vr-data');
-        // Placeholder text, so every line takes its space.
+        // Placeholders, so empty lines take space.
         panel.querySelectorAll('[data-vr]').forEach(node => {
             if (node.tagName === 'IMG') return;
             node.hidden = false;
@@ -911,7 +993,7 @@
             const textStyle = el => {
                 if (!el) return null;
                 const style = getComputedStyle(el);
-                // A zero-size inline-block sits on the first line's baseline.
+                // Baseline probe.
                 const probe = document.createElement('span');
                 probe.style.cssText = 'display:inline-block;width:0;height:0;margin:0;padding:0;border:0;vertical-align:baseline;';
                 el.insertBefore(probe, el.firstChild);
@@ -971,7 +1053,7 @@
             const flagsRow = panel.querySelector('.vr-flags');
             const headerStyle = getComputedStyle(header);
             const title = textStyle(titleEl);
-            // The title shares the header with the listener count, so it is cut off at its own width.
+            // Shares the header with the listener count.
             if (title) title.maxWidth = title.width;
             return {
                 height: stage.getBoundingClientRect().height,
@@ -996,7 +1078,6 @@
                 }),
                 labels: [...panel.querySelectorAll('.vr-label')].map(textStyle),
                 text,
-                // RadioText lines that fit in its cell.
                 rtLines: text.rt ? Math.max(1, Math.floor((text.rt.bottom - text.rt.top) / text.rt.lineHeight + 0.01)) : 0,
                 dim: Number.isFinite(dim) ? dim : 0.2,
                 flag: flagSlot && flagsRow ? {
@@ -1026,7 +1107,7 @@
         return `${text.slice(0, end)}\u{2026}`;
     }
 
-    // Canvas has no tabular-nums, so tabular digits get slots as wide as the widest digit.
+    // Canvas has no tabular-nums.
     function tabularDigitWidth(ctx) {
         return Math.max(...[...'0123456789'].map(digit => ctx.measureText(digit).width));
     }
@@ -1038,7 +1119,6 @@
             .reduce((sum, part) => sum + (/\d/.test(part) ? part.length * digit : ctx.measureText(part).width), 0);
     }
 
-    // Left-aligned at x.
     function fillCanvasText(ctx, text, x, y, tabular) {
         ctx.textAlign = 'left';
         if (!tabular) {
@@ -1067,7 +1147,6 @@
         if ('letterSpacing' in ctx) ctx.letterSpacing = style.letterSpacing;
     }
 
-    // One line of text as measured, centred in its cell or from its own left edge.
     function drawLayoutText(ctx, style, text, align = 'center', alpha = 1) {
         if (!style || !text) return;
         setLayoutFont(ctx, style, alpha);
@@ -1076,7 +1155,7 @@
         fillCanvasText(ctx, shown, x, style.baseline, style.tabular);
     }
 
-    // Runs [[style, text]] centred (or right-aligned) together on the line's baseline, like spans sharing one line.
+    // runs: [[style, text]] drawn as one line.
     function drawLayoutRuns(ctx, line, runs, align = 'center') {
         if (!line) return;
         const parts = runs.filter(([style, text]) => style && text);
@@ -1121,7 +1200,6 @@
         if (view.time && layout.time) {
             setLayoutFont(ctx, layout.time);
             const timeLeft = layout.time.center - measureCanvasText(ctx, view.time, layout.time.tabular) / 2;
-            // The title stops short of the centred timestamp.
             if (title) title = { ...title, maxWidth: Math.min(title.maxWidth, timeLeft - header.gap - title.left) };
             drawLayoutText(ctx, layout.time, view.time);
         }
@@ -1205,7 +1283,6 @@
             setLayoutFont(ctx, rt);
             view.rt.slice(0, layout.rtLines).forEach((line, i) => {
                 const y = rt.baseline + rt.lineHeight * i;
-                // Lines don't wrap, one too wide ends in an ellipsis like the panel's text-overflow.
                 const shown = fitCanvasText(ctx, line.text, rt.width);
                 const end = shown === line.text ? line.text.length : shown.length - 1;
                 const errorList = line.errors.split(',');
@@ -1240,7 +1317,7 @@
 
     // ---- Start-up ----
 
-    // Plugin scripts run before the webserver's plugins.js, so wait for its button helper.
+    // plugins.js loads after plugin scripts.
     function addButton(attempt = 0) {
         if (typeof addIconToPluginPanel !== 'function') {
             if (attempt < 100) setTimeout(() => addButton(attempt + 1), 100);
@@ -1257,7 +1334,7 @@
                 if (tries < 50) setTimeout(() => bind(tries + 1), 100);
                 return;
             }
-            // The webserver's tooltip is replaced by our own, which also mentions the right-click menu.
+            // Replaced by our own tooltip.
             if (typeof $ === 'function') $(button).off('mouseenter mouseleave focusin focusout');
             button.addEventListener('click', () => {
                 hideTooltip();
@@ -1272,6 +1349,7 @@
                 hideTooltip();
                 openMenu(event.clientX, event.clientY);
             });
+            startPreRoll();
         };
         bind();
     }
