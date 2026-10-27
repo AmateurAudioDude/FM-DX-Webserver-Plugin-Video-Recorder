@@ -334,7 +334,7 @@
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
             ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
         ];
-        if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} s)`, preRollOn, () => savePreRoll(!preRollOn)]);
+        if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} sec)`, preRollOn, () => savePreRoll(!preRollOn)]);
         items.forEach(([label, on, toggle]) => {
             const item = document.createElement('div');
             item.style.cssText = 'padding:8px 14px;cursor:pointer;color:var(--color-5,#eee);white-space:nowrap;display:flex;align-items:center;gap:8px;';
