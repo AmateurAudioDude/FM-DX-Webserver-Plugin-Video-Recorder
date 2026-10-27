@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    // Quantizer and full picture interval come from createMp4's caller, see QUALITY_SETTINGS in videorec.js.
+    // Quantizer and full picture interval come from createMp4's caller, see QUALITY_SETTINGS in pluginVideoRec.js.
     const CODEC_CANDIDATES = ['avc1.42E01F', 'avc1.4D401F', 'avc1.64001F'];
     const MAX_ENCODE_QUEUE = 8;
     const YIELD_INTERVAL_MS = 30;

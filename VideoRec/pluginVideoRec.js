@@ -3,6 +3,8 @@
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
+    Original concept taken from the Audio Recorder Plugin by mrwish7: https://github.com/mrwish7/webserver-audio-recorder
+
     Records the server's MP3 audio stream together with the live signal, RDS and TX data, then saves both as an
     MP4 video of the data panel. Everything happens in the browser.
 */

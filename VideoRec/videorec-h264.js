@@ -9,7 +9,7 @@
     // H.264 Baseline encoder for browsers without WebCodecs (plain HTTP pages). Changed 16x16 macroblocks are
     // intra coded (Intra_16x16 prediction, 4x4 transform, CAVLC), unchanged ones are skipped (copied from the
     // previous frame). Full pictures come at the start and every KEYFRAME_INTERVAL_MS of video time.
-    // Defaults only, VideoRec passes both per quality (QUALITY_SETTINGS in videorec.js).
+    // Defaults only, VideoRec passes both per quality (QUALITY_SETTINGS in pluginVideoRec.js).
     // Quantizer 0-51: lower is better quality and bigger files. null stores changed macroblocks uncompressed.
     const QP = 18;
     // Full picture interval in milliseconds of video time, Infinity for only the first frame.

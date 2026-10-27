@@ -5,7 +5,7 @@
 
     //// Server-side code ////
 
-    On Linux only the main frontend file is linked into /js/plugins, so the encoder scripts that videorec.js loads
+    On Linux only the main frontend file is linked into /js/plugins, so the encoder scripts that pluginVideoRec.js loads
     when a video is made are served from here.
 */
 
