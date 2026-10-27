@@ -3,7 +3,7 @@ var pluginConfig = {
     name: 'VideoRec',
     version: '1.2.0',
     author: 'AAD',
-    frontEndPath: 'VideoRec/videorec.js'
+    frontEndPath: 'VideoRec/pluginVideoRec.js'
 }
 
 // Backend (server) changes can go here...
