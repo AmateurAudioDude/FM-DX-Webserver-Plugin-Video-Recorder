@@ -26,7 +26,7 @@
 
     // const plugin update checker variables
     const pluginVersion = '1.2.0';
-    const pluginName = "Video Recorder";
+    const pluginName = "VideoRec";
     const pluginHomepageUrl = "https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder";
     const pluginUpdateUrl = "https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder/refs/heads/main/VideoRec/pluginVideoRec.js";
     const pluginSetupOnlyNotify = true;
@@ -223,7 +223,7 @@
                 sendToast(type, title, message.length > 28 ? message.slice(0, 16) + '...' + message.slice(-12) : message, false, false);
             }
         } else {
-            console.log(`[VideoRec] ${title}: ${message}`);
+            console.log(`[${pluginName}] ${title}: ${message}`);
         }
     }
 
@@ -1332,7 +1332,7 @@
     function addButton(attempt = 0) {
         if (typeof addIconToPluginPanel !== 'function') {
             if (attempt < 100) setTimeout(() => addButton(attempt + 1), 100);
-            else console.error('[VideoRec] addIconToPluginPanel not found after 10 seconds.');
+            else console.error(`[${pluginName}] addIconToPluginPanel not found after 10 seconds.`);
             return;
         }
         addIconToPluginPanel(BUTTON_ID, 'Video', 'solid', 'video', '');
