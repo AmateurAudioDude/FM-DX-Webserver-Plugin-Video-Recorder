@@ -13,6 +13,12 @@ Original concept taken from the [Audio Recorder Plugin by mrwish7](https://githu
 
 Configuration options found in `pluginVideoRec.js`
 
+v1.3.0
+------
+* Added "Show Server Name" option to the right-click menu
+* Added "Webserver Theme" option to the right-click menu
+* Fixed audio stream stutter while saving the video
+
 v1.2.0
 ------
 * Public release
