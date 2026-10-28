@@ -79,7 +79,10 @@
     function yieldToBrowser() {
         return new Promise(resolve => {
             const channel = new MessageChannel();
-            channel.port1.onmessage = () => resolve();
+            channel.port1.onmessage = () => {
+                channel.port1.close();
+                resolve();
+            };
             channel.port2.postMessage(null);
         });
     }
@@ -200,6 +203,34 @@
         return { samples, description };
     }
 
+    // Off the page thread, so full pictures don't stall the live audio.
+    function startWorkerEncoder(width, height, options) {
+        const worker = new Worker(`${SCRIPT_BASE}videorec-h264.js`);
+        const waiting = [];
+        worker.onmessage = ({ data }) => {
+            const next = waiting.shift();
+            if (data.error) next?.reject(new Error(data.error));
+            else next?.resolve(data);
+        };
+        worker.onerror = event => {
+            event.preventDefault();
+            worker.terminate();
+            waiting.splice(0).forEach(({ reject }) => reject(new Error(event.message || 'The video encoder could not start.')));
+        };
+        const request = (message, transfer = []) => new Promise((resolve, reject) => {
+            waiting.push({ resolve, reject });
+            worker.postMessage(message, transfer);
+        });
+        return request({ type: 'init', width, height, options }).then(({ description }) => ({
+            description,
+            encodeFrame: (rgba, timeMs) => request({ type: 'frame', rgba, timeMs }, [rgba.buffer]),
+            close: () => worker.terminate()
+        }), error => {
+            worker.terminate();
+            throw error;
+        });
+    }
+
     function loadVideoRecEncoder() {
         if (window.VideoRecH264) return Promise.resolve();
         return new Promise((resolve, reject) => {
@@ -216,26 +247,37 @@
 
     // Browsers without WebCodecs (plain HTTP pages) use VideoRec's own H.264 encoder.
     async function encodeWithVideoRec({ width, height, frames, draw, onProgress, signal, qp, keyframeIntervalMs }) {
-        await loadVideoRecEncoder();
-        const encoder = window.VideoRecH264.createEncoder(width, height, { qp, keyframeIntervalMs });
+        let encoder;
+        try {
+            encoder = await startWorkerEncoder(width, height, { qp, keyframeIntervalMs });
+        } catch (error) {
+            console.info(`[VideoRec] Encoder worker unavailable (${error?.message || error}), encoding on the page instead.`);
+            await loadVideoRecEncoder();
+            encoder = window.VideoRecH264.createEncoder(width, height, { qp, keyframeIntervalMs });
+        }
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
         const samples = [];
         let lastYieldAt = performance.now();
-        for (let i = 0; i < frames.length; i++) {
-            if (signal?.aborted) throw abortError();
-            const frame = frames[i];
-            draw(ctx, frame);
-            const { data, key } = encoder.encodeFrame(ctx.getImageData(0, 0, width, height).data, frame.t);
-            samples.push({ t: frame.t, data, key });
-            onProgress?.((i + 1) / frames.length);
-            if (performance.now() - lastYieldAt >= YIELD_INTERVAL_MS) {
-                await yieldToBrowser();
-                lastYieldAt = performance.now();
+        try {
+            for (let i = 0; i < frames.length; i++) {
+                if (signal?.aborted) throw abortError();
+                const frame = frames[i];
+                draw(ctx, frame);
+                const { data, key } = await encoder.encodeFrame(ctx.getImageData(0, 0, width, height).data, frame.t);
+                samples.push({ t: frame.t, data, key });
+                onProgress?.((i + 1) / frames.length);
+                if (performance.now() - lastYieldAt >= YIELD_INTERVAL_MS) {
+                    await yieldToBrowser();
+                    lastYieldAt = performance.now();
+                }
             }
+        } finally {
+            encoder.close?.();
         }
+        if (signal?.aborted) throw abortError();
         return { samples, description: encoder.description };
     }
 

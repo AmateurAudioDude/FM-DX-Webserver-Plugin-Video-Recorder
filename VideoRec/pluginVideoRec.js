@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.2.0 by AAD
+    VideoRec v1.3.0 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -34,6 +34,8 @@
 
     const QUALITY_KEY = 'videorec-quality';
     const TIMESTAMP_KEY = 'videorec-timestamp';
+    const THEME_KEY = 'videorec-theme';
+    const SERVER_NAME_KEY = 'videorec-server-name';
     const PRE_ROLL_KEY = 'videorec-preroll';
     const PRE_ROLL_RETRY_MS = 5000;
     const SIGNAL_KEEPALIVE_MS = 1000;
@@ -77,9 +79,9 @@
 [hidden] { display: none !important; }
 .vr-stage { display: flex; flex-direction: column; font-family: "SF Pro Text", Arial, Helvetica, sans-serif; font-size: 16px; line-height: normal; color: #e5e7eb; }
 .vr-stage * { box-sizing: border-box; }
-.vr-header { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
+.vr-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #0b1220; border-bottom: 1px solid rgba(148, 163, 184, 0.2); font-size: 14px; }
 .vr-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vr-time { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vr-time { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users-icon { font-family: "Font Awesome 6 Free"; font-weight: 900; font-style: normal; }
 .vr-body { background: #000; }
@@ -136,7 +138,7 @@
 .vr-flag-slot { display: inline-flex; justify-content: center; width: 20px; }
 .vr-flag { display: block; width: 20px; height: auto; }
 .vr-stereo { position: relative; display: inline-block; width: 18px; height: 12px; }
-.vr-circle { position: absolute; top: 0; width: 12px; height: 12px; border: 2px solid currentColor; border-radius: 50%; }
+.vr-circle { --vr-circle-line: 1.5px; position: absolute; top: 0; width: 12px; height: 12px; border: var(--vr-circle-line) solid currentColor; border-radius: 50%; }
 .vr-circle1 { left: 0; }
 .vr-circle2 { left: 6px; }
 .vr-stereo-forced .vr-circle1 { left: 3px; }
@@ -147,6 +149,15 @@
 .vr-tx-city { margin-top: 2px; font-size: 12px; }
 .vr-tx-small { margin-top: 2px; font-size: 11px; }
 .vr-tx-sep { opacity: 0.55; }`;
+
+    // "Webserver Theme" colours.
+    const THEME_CSS = `
+.vr-stage, .vr-data { color: var(--color-text, #e5e7eb); }
+.vr-header { background: var(--color-1, #0b1220); border-bottom-color: var(--color-2, rgba(148, 163, 184, 0.2)); }
+.vr-body { background: var(--color-main, #000); }
+.vr-cell { background: var(--color-1-transparent, rgba(15, 23, 42, 0.85)); border-color: var(--color-2-transparent, rgba(148, 163, 184, 0.2)); }
+.vr-label { color: var(--color-4, #38bdf8); }
+.vr-pty, .vr-tx-name { color: var(--color-main-bright, #38bdf8); }`;
 
     const PANEL_HTML = `
 <div class="vr-data">
@@ -193,6 +204,8 @@
     let robotoMono = null;
     let quality = loadQuality();
     let includeTimestamp = loadTimestamp();
+    let useTheme = loadTheme();
+    let showServerName = loadServerName();
     let preRollOn = loadPreRoll();
     let preRoll = null;
     let preRollRetry = 0;
@@ -217,11 +230,7 @@
 
     function notify(type, title, message) {
         if (typeof sendToast === 'function') {
-            if (navigator.userAgent.indexOf('Chrome') !== -1) {
-                sendToast(type, title, message, false, false);
-            } else {
-                sendToast(type, title, message.length > 28 ? message.slice(0, 16) + '...' + message.slice(-12) : message, false, false);
-            }
+            sendToast(type, title, message, false, false);
         } else {
             console.log(`[${pluginName}] ${title}: ${message}`);
         }
@@ -244,9 +253,9 @@
 
     function loadTimestamp() {
         try {
-            return window.localStorage.getItem(TIMESTAMP_KEY) === '1';
+            return window.localStorage.getItem(TIMESTAMP_KEY) !== '0';
         } catch (_error) {
-            return false;
+            return true;
         }
     }
 
@@ -254,6 +263,36 @@
         includeTimestamp = value;
         try {
             window.localStorage.setItem(TIMESTAMP_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
+    function loadTheme() {
+        try {
+            return window.localStorage.getItem(THEME_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveTheme(value) {
+        useTheme = value;
+        try {
+            window.localStorage.setItem(THEME_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
+    function loadServerName() {
+        try {
+            return window.localStorage.getItem(SERVER_NAME_KEY) !== '0';
+        } catch (_error) {
+            return true;
+        }
+    }
+
+    function saveServerName(value) {
+        showServerName = value;
+        try {
+            window.localStorage.setItem(SERVER_NAME_KEY, value ? '1' : '0');
         } catch (_error) {}
     }
 
@@ -342,6 +381,8 @@
             'outline:none'
         ].join(';');
         const items = [
+            ['Webserver Theme', useTheme, () => saveTheme(!useTheme)],
+            ['Show Server Name', showServerName, () => saveServerName(!showServerName)],
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
             ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
         ];
@@ -737,6 +778,8 @@
                 rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset }))
             };
             const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt);
+            const serverName = showServerName ? String(document.querySelector('#tuner-name span')?.textContent || '').trim() : '';
+            if (serverName) frames.forEach(frame => { frame.view.title = serverName; });
             const [audio, flags] = await Promise.all([
                 new Blob(rec.audio.map(([, data]) => data)).arrayBuffer(),
                 loadRecordingVideoFlags(frames),
@@ -744,7 +787,11 @@
                 loadRobotoMono()
             ]);
             if (controller.signal.aborted) return;
-            const layout = await measureRecordingVideoLayout(width / height);
+            let layout = await measureRecordingVideoLayout(width / height, useTheme);
+            if (useTheme && !canvasDrawsColors(layout)) {
+                console.info(`[${pluginName}] This browser can't draw the webserver theme's colours, using the default look.`);
+                layout = await measureRecordingVideoLayout(width / height, false);
+            }
             if (controller.signal.aborted) return;
             const blob = await window.VideoRecVideo.createMp4({
                 width,
@@ -763,7 +810,8 @@
             });
             if (controller.signal.aborted) return;
             downloadBlob(blob, rec.filename);
-            notify('success', 'Video recording complete', rec.filename);
+            const name = rec.filename;
+            notify('success', 'Video recording complete', navigator.userAgent.indexOf('Chrome') === -1 && name.length > 28 ? name.slice(0, 16) + '...' + name.slice(-12) : name);
         } catch (error) {
             if (error?.name !== 'AbortError') notify('error', 'Video recording failed', error?.message || String(error));
         } finally {
@@ -944,11 +992,11 @@
     }
 
     // Shadow root, so the page's CSS can't reach it.
-    async function measureRecordingVideoLayout(aspect) {
+    async function measureRecordingVideoLayout(aspect, themed = false) {
         const host = document.createElement('div');
         host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
         const root = host.attachShadow({ mode: 'open' });
-        root.innerHTML = `<style>${PANEL_CSS}</style><div class="vr-stage">${HEADER_HTML}<div class="vr-body">${PANEL_HTML}</div></div>`;
+        root.innerHTML = `<style>${PANEL_CSS}${themed ? THEME_CSS : ''}</style><div class="vr-stage">${HEADER_HTML}<div class="vr-body">${PANEL_HTML}</div></div>`;
         const stage = root.querySelector('.vr-stage');
         const header = root.querySelector('.vr-header');
         const titleEl = header.querySelector('.vr-title');
@@ -1064,8 +1112,6 @@
             const flagsRow = panel.querySelector('.vr-flags');
             const headerStyle = getComputedStyle(header);
             const title = textStyle(titleEl);
-            // Shares the header with the listener count.
-            if (title) title.maxWidth = title.width;
             return {
                 height: stage.getBoundingClientRect().height,
                 background: getComputedStyle(body).backgroundColor,
@@ -1101,7 +1147,8 @@
                 stereo: stereoCircles.length && circleStyle ? {
                     circles: stereoCircles,
                     forced: forcedCircles,
-                    lineWidth: px(circleStyle.borderTopWidth),
+                    // Border widths are rounded to screen pixels, the variable isn't.
+                    lineWidth: px(circleStyle.getPropertyValue('--vr-circle-line')) || px(circleStyle.borderTopWidth),
                     color: circleStyle.borderTopColor,
                     alpha: alphaOf(stereo)
                 } : null
@@ -1109,6 +1156,28 @@
         } finally {
             host.remove();
         }
+    }
+
+    // Theme shades are color-mix() results, which a canvas may not accept.
+    function canvasDrawsColors(layout) {
+        const ctx = document.createElement('canvas').getContext('2d');
+        const colors = [];
+        const collect = value => {
+            if (!value || typeof value !== 'object') return;
+            Object.entries(value).forEach(([key, item]) => {
+                if (typeof item === 'string' && (key === 'color' || key === 'background' || key === 'borderColor')) colors.push(item);
+                else collect(item);
+            });
+        };
+        collect(layout);
+        return colors.every(color => {
+            ctx.fillStyle = '#000';
+            ctx.fillStyle = color;
+            const first = ctx.fillStyle;
+            ctx.fillStyle = '#fff';
+            ctx.fillStyle = color;
+            return ctx.fillStyle === first;
+        });
     }
 
     function fitCanvasText(ctx, text, maxWidth) {
@@ -1168,7 +1237,7 @@
 
     // runs: [[style, text]] drawn as one line.
     function drawLayoutRuns(ctx, line, runs, align = 'center') {
-        if (!line) return;
+        if (!line) return 0;
         const parts = runs.filter(([style, text]) => style && text);
         const widths = parts.map(([style, text]) => {
             setLayoutFont(ctx, style);
@@ -1181,6 +1250,7 @@
             fillCanvasText(ctx, text, x, line.baseline, style.tabular);
             x += widths[i];
         });
+        return total;
     }
 
     function canvasRoundRect(ctx, x, y, w, h, r) {
@@ -1207,18 +1277,19 @@
         ctx.fillRect(0, 0, width, header.h);
         ctx.fillStyle = header.borderColor;
         ctx.fillRect(0, header.h - header.border, width, header.border);
-        let title = layout.title;
+        // Right to left: listener count, timestamp, then the title gets what's left.
+        const users = layout.users;
+        let right = users.line ? users.line.right : width;
+        if (view.users) {
+            right -= drawLayoutRuns(ctx, users.line, [[users.icon, users.icon?.text], [users.line, ' '], [users.count, view.users]], 'right') + header.gap;
+        }
         if (view.time && layout.time) {
             setLayoutFont(ctx, layout.time);
-            const timeLeft = layout.time.center - measureCanvasText(ctx, view.time, layout.time.tabular) / 2;
-            if (title) title = { ...title, maxWidth: Math.min(title.maxWidth, timeLeft - header.gap - title.left) };
-            drawLayoutText(ctx, layout.time, view.time);
+            right -= measureCanvasText(ctx, view.time, layout.time.tabular);
+            fillCanvasText(ctx, view.time, right, layout.time.baseline, layout.time.tabular);
+            right -= header.gap;
         }
-        drawLayoutText(ctx, title, view.title, 'left');
-        if (view.users) {
-            const users = layout.users;
-            drawLayoutRuns(ctx, users.line, [[users.icon, users.icon?.text], [users.line, ' '], [users.count, view.users]], 'right');
-        }
+        if (layout.title) drawLayoutText(ctx, { ...layout.title, maxWidth: right - layout.title.left }, view.title, 'left');
 
         ctx.globalAlpha = 1;
         layout.cells.forEach(cell => {

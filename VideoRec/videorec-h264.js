@@ -863,5 +863,23 @@
         return { description, encodeFrame };
     }
 
-    window.VideoRecH264 = { createEncoder };
+    self.VideoRecH264 = { createEncoder };
+
+    // Worker mode: "init", then one "frame" message per picture.
+    if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
+        let encoder = null;
+        self.onmessage = ({ data: message }) => {
+            try {
+                if (message.type === 'init') {
+                    encoder = createEncoder(message.width, message.height, message.options);
+                    self.postMessage({ description: encoder.description });
+                    return;
+                }
+                const { data, key } = encoder.encodeFrame(message.rgba, message.timeMs);
+                self.postMessage({ data, key }, [data.buffer]);
+            } catch (error) {
+                self.postMessage({ error: error?.message || String(error) });
+            }
+        };
+    }
 })();

@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.2.0 by AAD
+    VideoRec v1.3.0 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
