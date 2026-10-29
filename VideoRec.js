@@ -1,7 +1,7 @@
 // Plugin configuration, this is used in the administration when plugins are loaded
 var pluginConfig = {
     name: 'VideoRec',
-    version: '1.3.0',
+    version: '1.3.1',
     author: 'AAD',
     frontEndPath: 'VideoRec/pluginVideoRec.js'
 }

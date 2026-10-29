@@ -13,6 +13,10 @@ Original concept taken from the [Audio Recorder Plugin by mrwish7](https://githu
 
 Configuration options found in `pluginVideoRec.js`
 
+v1.3.1
+------
+* Added "Average Signal" option to the right-click menu
+
 v1.3.0
 ------
 * Added "Show Server Name" option to the right-click menu

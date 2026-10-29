@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.3.0 by AAD
+    VideoRec v1.3.1 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -25,7 +25,7 @@
     };
 
     // const plugin update checker variables
-    const pluginVersion = '1.2.0';
+    const pluginVersion = '1.3.1';
     const pluginName = "VideoRec";
     const pluginHomepageUrl = "https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder";
     const pluginUpdateUrl = "https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder/refs/heads/main/VideoRec/pluginVideoRec.js";
@@ -36,9 +36,13 @@
     const TIMESTAMP_KEY = 'videorec-timestamp';
     const THEME_KEY = 'videorec-theme';
     const SERVER_NAME_KEY = 'videorec-server-name';
+    const AVERAGE_SIGNAL_KEY = 'videorec-average-signal';
     const PRE_ROLL_KEY = 'videorec-preroll';
     const PRE_ROLL_RETRY_MS = 5000;
     const SIGNAL_KEEPALIVE_MS = 1000;
+    // "Average Signal": the webserver shows the mean of its last 8 readings, sent at most every 75 ms.
+    const SIGNAL_AVERAGE_READINGS = 8;
+    const SIGNAL_READING_MS = 75;
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
     const AUDIO_URL = `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}${window.location.pathname}audio`;
@@ -206,6 +210,7 @@
     let includeTimestamp = loadTimestamp();
     let useTheme = loadTheme();
     let showServerName = loadServerName();
+    let averageSignal = loadAverageSignal();
     let preRollOn = loadPreRoll();
     let preRoll = null;
     let preRollRetry = 0;
@@ -293,6 +298,21 @@
         showServerName = value;
         try {
             window.localStorage.setItem(SERVER_NAME_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
+    function loadAverageSignal() {
+        try {
+            return window.localStorage.getItem(AVERAGE_SIGNAL_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveAverageSignal(value) {
+        averageSignal = value;
+        try {
+            window.localStorage.setItem(AVERAGE_SIGNAL_KEY, value ? '1' : '0');
         } catch (_error) {}
     }
 
@@ -384,6 +404,7 @@
             ['Webserver Theme', useTheme, () => saveTheme(!useTheme)],
             ['Show Server Name', showServerName, () => saveServerName(!showServerName)],
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
+            ['Average Signal', averageSignal, () => saveAverageSignal(!averageSignal)],
             ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
         ];
         if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} sec)`, preRollOn, () => savePreRoll(!preRollOn)]);
@@ -464,6 +485,9 @@
             lastSigRaw: null,
             lastSignalAt: 0,
             lastRdsKey: null,
+            readings: 0,
+            firstReadingAt: 0,
+            lastReadingAt: 0,
             dataSocket: null,
             onData: null,
             onClose: null,
@@ -605,6 +629,8 @@
         }
         const now = Date.now();
         const freq = Number.parseFloat(data.freq);
+        if (!rec.readings++) rec.firstReadingAt = now;
+        rec.lastReadingAt = now;
 
         const sigRaw = String(data.sigRaw || '');
         if (sigRaw !== rec.lastSigRaw || now - rec.lastSignalAt >= SIGNAL_KEEPALIVE_MS) {
@@ -757,6 +783,12 @@
         setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
 
+    // How far apart the webserver's readings arrived, never under its 75 ms minimum.
+    function signalReadingMs(rec) {
+        if (rec.readings < 2) return SIGNAL_READING_MS;
+        return Math.max(SIGNAL_READING_MS, Math.round((rec.lastReadingAt - rec.firstReadingAt) / (rec.readings - 1)));
+    }
+
     async function makeVideo(rec, stoppedAt) {
         if (!rec.audio.length) {
             setButton('idle');
@@ -777,7 +809,7 @@
                 signal: sliceSamples(rec.signal, startedAt, stoppedAt, sample => sample[0], (sample, offset) => [offset, ...sample.slice(1)]),
                 rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset }))
             };
-            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt);
+            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt, averageSignal ? signalReadingMs(rec) : 0);
             const serverName = showServerName ? String(document.querySelector('#tuner-name span')?.textContent || '').trim() : '';
             if (serverName) frames.forEach(frame => { frame.view.title = serverName; });
             const [audio, flags] = await Promise.all([
@@ -904,13 +936,37 @@
         return alpha ? Math.max(0, 70 - alpha) / 100 : 1;
     }
 
-    function getRecordingView(data, peaks, ptyNames, unit, offsetMs) {
+    // Only changes are stored, so each value stands for the readings until the next one, spread evenly.
+    function recordingSignalReadings(signal, index, readingMs) {
+        const next = signal[index + 1];
+        if (!next) return { count: Infinity, spacing: readingMs };
+        const count = Math.max(1, Math.round((next[0] - signal[index][0]) / readingMs));
+        return { count, spacing: (next[0] - signal[index][0]) / count };
+    }
+
+    function averageRecordingSignal(signal, offsetMs, readingMs) {
+        let left = SIGNAL_AVERAGE_READINGS;
+        let sum = 0;
+        let count = 0;
+        for (let index = findRecordingIndex(signal, offsetMs, sample => sample[0]), first = true; index >= 0 && left > 0; index--, first = false) {
+            const readings = recordingSignalReadings(signal, index, readingMs);
+            const take = Math.min(left, first ? Math.floor((offsetMs - signal[index][0]) / readings.spacing + 1e-9) + 1 : readings.count);
+            if (Number.isFinite(signal[index][1])) {
+                sum += signal[index][1] * take;
+                count += take;
+            }
+            left -= take;
+        }
+        return count ? sum / count : NaN;
+    }
+
+    function getRecordingView(data, peaks, ptyNames, unit, offsetMs, averageMs = 0) {
         const sigIndex = findRecordingIndex(data.signal, offsetMs, sample => sample[0]);
         const rdsIndex = findRecordingIndex(data.rds, offsetMs, sample => sample.t);
         const sig = sigIndex >= 0 ? data.signal[sigIndex] : null;
         const rds = rdsIndex >= 0 ? data.rds[rdsIndex] : null;
         const quality = value => (Number.isFinite(value) ? `${value}%` : '-');
-        const sigDbf = sig ? Number(sig[1]) : NaN;
+        const sigDbf = averageMs ? averageRecordingSignal(data.signal, offsetMs, averageMs) : (sig ? Number(sig[1]) : NaN);
         const peak = sigIndex >= 0 ? peaks[sigIndex] : null;
         const ms = Number.isInteger(rds?.ms) ? rds.ms : -1;
         const iso = /^[A-Z]{2}$/.test(String(rds?.ci || '')) && rds.ci !== 'UN' ? rds.ci : '';
@@ -950,7 +1006,8 @@
         };
     }
 
-    function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null) {
+    // averageMs: reading interval for "Average Signal", 0 = off.
+    function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null, averageMs = 0) {
         const end = Math.max(0, Number(data.durationMs) || 0);
         const withTime = typeof timestampAt === 'function' && Number.isFinite(data.startedAt);
         const times = new Set([0]);
@@ -958,10 +1015,14 @@
         (data.rds || []).forEach(sample => times.add(Math.round(sample.t)));
         // Whole seconds, so the timestamp ticks.
         if (withTime) for (let t = 1000 - (data.startedAt % 1000); t < end; t += 1000) times.add(t);
+        if (averageMs) (data.signal || []).forEach((sample, i) => {
+            const readings = recordingSignalReadings(data.signal, i, averageMs);
+            for (let m = 1; m < Math.min(readings.count, SIGNAL_AVERAGE_READINGS); m++) times.add(Math.ceil(sample[0] + m * readings.spacing));
+        });
         const frames = [];
         let lastKey = null;
         [...times].filter(t => t === 0 || (t > 0 && t < end)).sort((a, b) => a - b).forEach(t => {
-            const view = getRecordingView(data, peaks, ptyNames, unit, t);
+            const view = getRecordingView(data, peaks, ptyNames, unit, t, averageMs);
             if (withTime) view.time = timestampAt(data.startedAt + t);
             const key = JSON.stringify(view);
             if (key === lastKey) return;
