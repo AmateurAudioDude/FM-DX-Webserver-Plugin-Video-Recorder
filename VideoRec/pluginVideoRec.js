@@ -208,6 +208,7 @@
     let recording = null;
     let encoding = null;
     let robotoMono = null;
+    let tunerName = null;
     let quality = loadQuality();
     let includeTimestamp = loadTimestamp();
     let useTheme = loadTheme();
@@ -750,6 +751,19 @@
         return robotoMono;
     }
 
+    // Tune name from server config
+    function loadTunerName() {
+        tunerName ||= fetch(new URL('static_data', window.location.href).href)
+            .then(response => response.ok ? response.json() : null)
+            .then(data => String(data?.tunerName || '').trim())
+            .catch(() => '')
+            .then(name => {
+                if (!name) tunerName = null;
+                return name;
+            });
+        return tunerName;
+    }
+
     function getPtyNames() {
         try {
             return window.localStorage.getItem('rdsMode') === 'true' ? PTY_NAMES_RBDS : PTY_NAMES_RDS;
@@ -813,7 +827,7 @@
                 forcedMonoIsMpx: FORCED_MONO_IS_MPX
             };
             const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt, averageSignal ? signalReadingMs(rec) : 0);
-            const serverName = showServerName ? String(document.querySelector('#tuner-name span')?.textContent || '').trim() : '';
+            const serverName = showServerName ? (await loadTunerName() || String(document.querySelector('#tuner-name span')?.textContent || '').trim()) : '';
             if (serverName) frames.forEach(frame => { frame.view.title = serverName; });
             const [audio, flags] = await Promise.all([
                 new Blob(rec.audio.map(([, data]) => data)).arrayBuffer(),

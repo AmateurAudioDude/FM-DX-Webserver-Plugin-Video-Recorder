@@ -3,7 +3,7 @@
 This plugin adds a button to allow client-side video recordings to be made within FM-DX Webserver.  
 Original concept taken from the [Audio Recorder Plugin by mrwish7](https://github.com/mrwish7/webserver-audio-recorder).
 
-<img width="248" height="152" alt="video" src="https://github.com/user-attachments/assets/da16ec47-ede0-45cd-99f9-697a5069ae08" />
+<img width="275" height="275" alt="video" src="https://github.com/user-attachments/assets/dce585a2-dae4-46d9-9821-a590746600a9" />
 
 * [Download the latest zip file](https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder/archive/refs/heads/main.zip)
 * Extract `VideoRec` folder, and `VideoRec.js` to FM-DX Webserver `plugins` folder
@@ -25,4 +25,20 @@ v1.3.0
 
 v1.2.0
 ------
-* Public release
+* Added "Pre-roll" option to the right-click menu
+
+v1.1.2
+------
+* Resize MP4 video
+
+v1.1.1
+------
+* Added "Include Timestamp" option to the right-click menu
+
+v1.1.0
+------
+* Added "High Quality" option to the right-click menu
+
+v1.0.0
+------
+* Initial release
