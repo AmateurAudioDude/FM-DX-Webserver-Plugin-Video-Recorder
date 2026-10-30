@@ -17,6 +17,8 @@
     // Pre-roll: the audio stays connected, so a recording starts up to PRE_ROLL_SECONDS before the button was pressed.
     const PRE_ROLL_ENABLED = true;
     const PRE_ROLL_SECONDS = 15;
+    // true for tuners using MPX mode
+    const FORCED_MONO_IS_MPX = false;
     // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
     // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
     const QUALITY_SETTINGS = {
@@ -807,7 +809,8 @@
                 startedAt,
                 durationMs: Math.max(0, stoppedAt - startedAt),
                 signal: sliceSamples(rec.signal, startedAt, stoppedAt, sample => sample[0], (sample, offset) => [offset, ...sample.slice(1)]),
-                rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset }))
+                rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset })),
+                forcedMonoIsMpx: FORCED_MONO_IS_MPX
             };
             const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt, averageSignal ? signalReadingMs(rec) : 0);
             const serverName = showServerName ? String(document.querySelector('#tuner-name span')?.textContent || '').trim() : '';
@@ -993,7 +996,8 @@
             music: ms === 1,
             speech: ms === 0,
             stereo: sig?.[4] === 1,
-            stereoForced: sig?.[5] === 1,
+            // forcedMonoIsMpx: forced mono means MPX mode, so the circles show the pilot as in stereo mode.
+            stereoForced: sig?.[5] === 1 && data.forcedMonoIsMpx !== true,
             flagIso: iso,
             tx: tx ? {
                 name: tx.name || '',
