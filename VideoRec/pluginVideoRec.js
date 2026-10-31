@@ -1,9 +1,10 @@
 /*
-    VideoRec v1.3.1 by AAD
+    VideoRec v1.4.0 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
-    Original concept taken from the Audio Recorder Plugin by mrwish7: https://github.com/mrwish7/webserver-audio-recorder
+    Original concept taken from the Audio Recorder plugin by mrwish7: https://github.com/mrwish7/webserver-audio-recorder
+    Metrics Monitor design from the Metrics Monitor plugin by Highpoint2000: https://github.com/Highpoint2000/MetricsMonitor
 
     Records the server's MP3 audio stream together with the live signal, RDS and TX data, then saves both as an
     MP4 video of the data panel. Everything happens in the browser.
@@ -19,6 +20,17 @@
     const PRE_ROLL_SECONDS = 15;
     // true for tuners using MPX mode
     const FORCED_MONO_IS_MPX = false;
+    // "Metrics Monitor Style" meters, copy these from the server's metricsmonitor.json. stereoBoost is only used
+    // when MetricsMonitor isn't on the page, otherwise its own value is read.
+    const METRICSMONITOR = {
+        stereoBoost: 2,
+        multipathMode: 0,
+        colorSafe: 'rgb(0, 255, 0)',
+        colorWarning: 'rgb(255, 255, 0)',
+        colorDanger: 'rgb(255, 0, 0)',
+        peakMode: 'dynamic',
+        peakColorFixed: 'rgb(251, 174, 38)'
+    };
     // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
     // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
     const QUALITY_SETTINGS = {
@@ -39,12 +51,31 @@
     const THEME_KEY = 'videorec-theme';
     const SERVER_NAME_KEY = 'videorec-server-name';
     const AVERAGE_SIGNAL_KEY = 'videorec-average-signal';
+    const METRICS_STYLE_KEY = 'videorec-metrics-style';
+    const STATION_LOGO_KEY = 'videorec-station-logo';
+    const QUICKTIME_COPY_KEY = 'videorec-quicktime-copy';
+    // Started together, Safari keeps only the last download and Firefox reverses them.
+    const QUICKTIME_COPY_DELAY_MS = 1000;
     const PRE_ROLL_KEY = 'videorec-preroll';
     const PRE_ROLL_RETRY_MS = 5000;
     const SIGNAL_KEEPALIVE_MS = 1000;
     // "Average Signal": the webserver shows the mean of its last 8 readings, sent at most every 75 ms.
     const SIGNAL_AVERAGE_READINGS = 8;
     const SIGNAL_READING_MS = 75;
+    // MetricsMonitor redraws its meters every animation frame, reads ACI/CCI at most every 250 ms and measures
+    // LEFT/RIGHT over the last 4096 audio samples. The video shows the moving meters at 25 frames a second.
+    const METRICS_STEP_MS = 1000 / 60;
+    const METRICS_UPDATE_MS = 250;
+    const METRICS_WINDOW_SAMPLES = 4096;
+    const METRICS_FRAME_MS = 40;
+    const METRICS_SEGMENTS = 30;
+    const METRICS_BLOCK_SAMPLES = 128;
+    const METRICS_DECODE_FRAMES = 400;
+    const METRICS_ON = 'rgba(255, 255, 255, 0.9)';
+    const METRICS_OFF = '#696969';
+    // The logo plugins keep the logo within about 70% of their panel's width.
+    const LOGO_WIDTH = 0.7;
+    const LOGO_TIMEOUT_MS = 8000;
     const BUTTON_ID = 'social-record-btn';
     const SCRIPT_BASE = new URL('videorec/', window.location.href).href;
     const AUDIO_URL = `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}${window.location.pathname}audio`;
@@ -129,6 +160,7 @@
 .vr-unit { font-size: 13px; }
 .vr-peak, .vr-sub { min-height: 1.2em; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
 .vr-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vr-lps { font-family: "Roboto Mono", monospace; font-size: 9px; }
 .vr-status { gap: 6px; }
 .vr-pty {
     max-width: 100%;
@@ -154,7 +186,41 @@
 .vr-tx-name { font-size: 14px; color: #38bdf8; }
 .vr-tx-city { margin-top: 2px; font-size: 12px; }
 .vr-tx-small { margin-top: 2px; font-size: 11px; }
-.vr-tx-sep { opacity: 0.55; }`;
+.vr-tx-sep { opacity: 0.55; }
+.vr-data.vr-mm { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.vr-logo { flex: 1 1 auto; align-self: stretch; }
+.vr-mm-cell { position: relative; grid-column: 5 / span 2; grid-row: 1 / span 2; padding: 0; }
+.vr-mm-cell.vr-mm-rds-on { background: rgba(30, 41, 59, 0.85); }
+.vr-mm-inner { position: absolute; inset: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 5px 7px; padding: 7px 9px; }
+.vr-mm-left, .vr-mm-right { display: flex; min-width: 0; align-items: center; font-family: Arial, Helvetica, sans-serif; font-weight: 700; }
+.vr-mm-left { gap: 5.5px; }
+/* TP, TA and RDS span about the SIGNAL box, as in MetricsMonitor */
+.vr-mm-right { justify-content: space-between; padding: 0 5.5% 0 1.5%; }
+.vr-mm-badge { display: inline-block; flex: 0 0 auto; height: 9px; padding: 0 1.5px; border: 1px solid; border-radius: 2px; font-size: 6.5px; line-height: 7px; text-align: center; white-space: nowrap; }
+.vr-mm-text { height: 10px; font-family: "Titillium Web", Arial, Helvetica, sans-serif; font-size: 7.5px; line-height: 8px; }
+.vr-mm-right .vr-mm-badge { padding: 0 2.5px; }
+.vr-mm-pty { flex: 0 1 57px; min-width: 0; padding: 0 2px; overflow: hidden; }
+.vr-mm-pty.vr-mm-on { font-weight: 400; }
+.vr-mm-stereo { flex: 0 0 auto; width: 14px; height: 9px; }
+.vr-mm-rds { flex: 0 0 auto; font-size: 11.5px; font-style: italic; font-weight: 900; letter-spacing: -0.03em; white-space: nowrap; }
+.vr-mm-meters { display: flex; min-height: 0; gap: 7px; }
+.vr-mm-group { display: flex; gap: 12px; }
+.vr-mm-meter { display: flex; gap: 2px; }
+.vr-mm-scale { display: flex; flex-direction: column; justify-content: space-between; padding: 9px 0; font-size: 6px; line-height: 1; color: #aaa; text-align: right; }
+.vr-mm-col { display: flex; flex-direction: column; align-items: center; width: 9px; }
+.vr-mm-unit, .vr-mm-label { height: 9px; font-size: 6.5px; line-height: 9px; color: #aaa; white-space: nowrap; }
+.vr-mm-label { color: #fff; }
+.vr-mm-bar { flex: 1 1 auto; align-self: stretch; padding: 1px; }
+.vr-mm-signal { min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; white-space: nowrap; font-family: "Titillium Web", "SF Pro Text", Arial, Helvetica, sans-serif; border-radius: 8px; background: rgba(148, 163, 184, 0.08); }
+.vr-mm-heading { font-size: 12px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.04em; }
+.vr-mm-bw { font-size: 7.5px; font-weight: 500; color: #aaa; }
+.vr-mm-peak { font-size: 8px; opacity: 0.7; }
+.vr-mm-value { font-size: 18px; font-weight: 300; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.vr-mm-dec { font-size: 70%; opacity: 0.7; }
+.vr-mm-sig-unit { font-size: 40%; color: #888; }
+.vr-mm-mp { font-size: 8px; }
+.vr-mm-mp-label { color: #38bdf8; }
+.vr-mm-icon { font-family: "Font Awesome 6 Free"; font-weight: 900; font-style: normal; }`;
 
     // "Webserver Theme" colours.
     const THEME_CSS = `
@@ -163,14 +229,40 @@
 .vr-body { background: var(--color-main, #000); }
 .vr-cell { background: var(--color-1-transparent, rgba(15, 23, 42, 0.85)); border-color: var(--color-2-transparent, rgba(148, 163, 184, 0.2)); }
 .vr-label { color: var(--color-4, #38bdf8); }
-.vr-pty, .vr-tx-name { color: var(--color-main-bright, #38bdf8); }`;
+.vr-pty, .vr-tx-name { color: var(--color-main-bright, #38bdf8); }
+.vr-mm-cell.vr-mm-rds-on { background: var(--color-2-transparent, rgba(30, 41, 59, 0.85)); }
+.vr-mm-signal { background: var(--color-1-transparent, rgba(148, 163, 184, 0.08)); }
+.vr-mm-heading, .vr-mm-mp-label { color: var(--color-4, #38bdf8); }`;
 
-    const PANEL_HTML = `
+    const PS_HTML = '<span class="vr-label">PS</span><span class="vr-value vr-ps" data-vr="ps"></span>';
+    // Long PS under PS, only when the recording has it. Monospace at 9px fits its 32 characters, the ellipsis is a fallback.
+    const LPS_HTML = '<span class="vr-sub vr-lps" data-vr="lps"></span>';
+    const PI_FREQ_HTML = `
+        <div class="vr-cell vr-span-2"><span class="vr-label">PI code</span><span class="vr-sub" data-vr="regularPi"></span><span class="vr-value" data-vr="pi"></span></div>
+        <div class="vr-cell vr-span-2"><span class="vr-label">Frequency</span><span class="vr-sub" data-vr="tuner"></span><span class="vr-value" data-vr="freq"></span></div>`;
+    const RT_TX_HTML = `
+        <div class="vr-cell vr-span-4"><span class="vr-label">RadioText</span><span class="vr-value vr-rt" data-vr="rt"></span></div>
+        <div class="vr-cell vr-span-2">
+            <div class="vr-tx-body" data-vr="txBody" hidden>
+                <span class="vr-tx-name" data-vr="txName"></span>
+                <span class="vr-tx-city"><span data-vr="txCity"></span> <span class="vr-tx-small">[<span data-vr="txItu"></span>]</span></span>
+                <span class="vr-tx-small"><span data-vr="txPower"></span> <span class="vr-tx-sep">\u{2022}</span> <span data-vr="txDist"></span> <span class="vr-tx-sep">\u{2022}</span> <span data-vr="txAzi"></span></span>
+            </div>
+        </div>`;
+
+    const ACI_CCI_HTML = `
+        <div class="vr-cell"><span class="vr-label">ACI</span><span class="vr-value" data-vr="aci"></span></div>
+        <div class="vr-cell"><span class="vr-label">CCI</span><span class="vr-value" data-vr="cci"></span></div>`;
+    // "Station Logo": the logo panel takes the ACI and CCI cells' place.
+    const LOGO_HTML = `
+        <div class="vr-cell vr-span-2"><span class="vr-logo"></span></div>`;
+
+    // parts: { logo, lps } for the optional parts.
+    function panelHtml(parts) {
+        return `
 <div class="vr-data">
     <div class="vr-row">
-        <div class="vr-cell vr-span-2"><span class="vr-label">PS</span><span class="vr-value vr-ps" data-vr="ps"></span></div>
-        <div class="vr-cell"><span class="vr-label">ACI</span><span class="vr-value" data-vr="aci"></span></div>
-        <div class="vr-cell"><span class="vr-label">CCI</span><span class="vr-value" data-vr="cci"></span></div>
+        <div class="vr-cell vr-span-2">${PS_HTML}${parts.lps ? LPS_HTML : ''}</div>${parts.logo ? LOGO_HTML : ACI_CCI_HTML}
         <div class="vr-cell vr-span-2 vr-status">
             <span class="vr-pty" data-vr="pty"></span>
             <span class="vr-flags">
@@ -182,26 +274,56 @@
             </span>
         </div>
     </div>
-    <div class="vr-row">
-        <div class="vr-cell vr-span-2"><span class="vr-label">PI code</span><span class="vr-sub" data-vr="regularPi"></span><span class="vr-value" data-vr="pi"></span></div>
-        <div class="vr-cell vr-span-2"><span class="vr-label">Frequency</span><span class="vr-sub" data-vr="tuner"></span><span class="vr-value" data-vr="freq"></span></div>
+    <div class="vr-row">${PI_FREQ_HTML}
         <div class="vr-cell vr-span-2">
             <span class="vr-label">Signal</span>
             <span class="vr-peak" data-vr="peak"></span>
             <span class="vr-value"><span data-vr="sigInt"></span><span class="vr-faint" data-vr="sigDec"></span> <span class="vr-unit" data-vr="sigUnit"></span></span>
         </div>
     </div>
-    <div class="vr-row">
-        <div class="vr-cell vr-span-4"><span class="vr-label">RadioText</span><span class="vr-value vr-rt" data-vr="rt"></span></div>
-        <div class="vr-cell vr-span-2">
-            <div class="vr-tx-body" data-vr="txBody" hidden>
-                <span class="vr-tx-name" data-vr="txName"></span>
-                <span class="vr-tx-city"><span data-vr="txCity"></span> <span class="vr-tx-small">[<span data-vr="txItu"></span>]</span></span>
-                <span class="vr-tx-small"><span data-vr="txPower"></span> <span class="vr-tx-sep">\u{2022}</span> <span data-vr="txDist"></span> <span class="vr-tx-sep">\u{2022}</span> <span data-vr="txAzi"></span></span>
-            </div>
-        </div>
+    <div class="vr-row">${RT_TX_HTML}
     </div>
 </div>`;
+    }
+
+    const METRICS_PERCENT_SCALE = ['100', '90', '80', '70', '60', '50', '40', '30', '20', '10', '0'];
+
+    // "Metrics Monitor Style": one MetricsMonitor panel replaces the PTY and Signal cells.
+    function metricsPanelHtml(parts) {
+        return `
+<div class="vr-data vr-mm">
+    <div class="vr-cell vr-span-2">${PS_HTML}${parts.lps ? LPS_HTML : ''}</div>${parts.logo ? LOGO_HTML : ACI_CCI_HTML}
+    <div class="vr-cell vr-mm-cell">
+        <div class="vr-mm-inner">
+            <span class="vr-mm-left">
+                <span class="vr-mm-badge vr-mm-text" data-mm="ecc">ECC</span>
+                <span class="vr-mm-stereo" data-mm="stereo"></span>
+                <span class="vr-mm-badge vr-mm-text vr-mm-pty" data-mm="pty">PTY</span>
+            </span>
+            <span class="vr-mm-right">
+                <span class="vr-mm-badge" data-mm="tp">TP</span>
+                <span class="vr-mm-badge" data-mm="ta">TA</span>
+                <span class="vr-mm-rds" data-mm="rds">R\u{00B7}D\u{00B7}S</span>
+            </span>
+            <div class="vr-mm-meters">
+                <div class="vr-mm-group">
+                    ${metricsMeterHtml('left', 'LEFT', 'dB', ['+5', '0', '-5', '-10', '-15', '-20', '-26'])}
+                    ${metricsMeterHtml('right', 'RIGHT', 'dB', null)}
+                </div>
+                ${metricsMeterHtml('aci', 'ACI', '%', METRICS_PERCENT_SCALE)}
+                ${metricsMeterHtml('cci', 'CCI', '%', METRICS_PERCENT_SCALE)}
+            </div>
+            <div class="vr-mm-signal" data-mm="signal">
+                <span class="vr-mm-heading" data-mm="heading">Signal</span>
+                <span class="vr-mm-bw" data-mm="bw"><i class="vr-mm-icon" data-mm="bwIcon">\u{f07e}</i> <span data-mm="bwText">000 kHz</span></span>
+                <span class="vr-mm-peak" data-mm="peak"><i class="vr-mm-icon" data-mm="peakIcon">\u{f062}</i> <span data-mm="peakText">00.0 dBf</span></span>
+                <span class="vr-mm-value" data-mm="value"><span data-mm="int">00</span><span class="vr-mm-dec" data-mm="dec">.0</span> <span class="vr-mm-sig-unit" data-mm="unit">dBf</span></span>
+                <span class="vr-mm-mp" data-mm="mp"><span class="vr-mm-mp-label" data-mm="mpLabel">Multipath:</span> <span data-mm="mpValue">00%</span></span>
+            </div>
+        </div>
+    </div>${PI_FREQ_HTML}${RT_TX_HTML}
+</div>`;
+    }
 
     const HEADER_HTML = `<div class="vr-header"><span class="vr-title">VideoRec</span><span class="vr-time">0</span><span class="vr-users"><i class="vr-users-icon">\u{f007}</i> <span class="vr-users-count">0</span></span></div>`;
 
@@ -214,6 +336,9 @@
     let useTheme = loadTheme();
     let showServerName = loadServerName();
     let averageSignal = loadAverageSignal();
+    let metricsStyle = loadMetricsStyle();
+    let stationLogo = loadStationLogo();
+    let quickTimeCopy = loadQuickTimeCopy();
     let preRollOn = loadPreRoll();
     let preRoll = null;
     let preRollRetry = 0;
@@ -319,6 +444,51 @@
         } catch (_error) {}
     }
 
+    function loadMetricsStyle() {
+        try {
+            return window.localStorage.getItem(METRICS_STYLE_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveMetricsStyle(value) {
+        metricsStyle = value;
+        try {
+            window.localStorage.setItem(METRICS_STYLE_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
+    function loadStationLogo() {
+        try {
+            return window.localStorage.getItem(STATION_LOGO_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveStationLogo(value) {
+        stationLogo = value;
+        try {
+            window.localStorage.setItem(STATION_LOGO_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
+    function loadQuickTimeCopy() {
+        try {
+            return window.localStorage.getItem(QUICKTIME_COPY_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveQuickTimeCopy(value) {
+        quickTimeCopy = value;
+        try {
+            window.localStorage.setItem(QUICKTIME_COPY_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
     function loadPreRoll() {
         try {
             return window.localStorage.getItem(PRE_ROLL_KEY) === '1';
@@ -405,10 +575,13 @@
         ].join(';');
         const items = [
             ['Webserver Theme', useTheme, () => saveTheme(!useTheme)],
+            ['Metrics Monitor Style', metricsStyle, () => saveMetricsStyle(!metricsStyle)],
+            ...(logoPluginFound() ? [['Station Logo', stationLogo, () => saveStationLogo(!stationLogo)]] : []),
             ['Show Server Name', showServerName, () => saveServerName(!showServerName)],
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
             ['Average Signal', averageSignal, () => saveAverageSignal(!averageSignal)],
-            ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')]
+            ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')],
+            ['QuickTime Compatible Copy', quickTimeCopy, () => saveQuickTimeCopy(!quickTimeCopy)]
         ];
         if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} sec)`, preRollOn, () => savePreRoll(!preRollOn)]);
         items.forEach(([label, on, toggle]) => {
@@ -612,6 +785,24 @@
         return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
     }
 
+    // StationLogo and StationLogosOCE show the logo in #station-logo, or #station-logo-phone on phones. Only the one in use
+    // changes, so the last one to change wins.
+    const LOGO_IDS = ['station-logo', 'station-logo-phone'];
+    const logoSources = {};
+    let logoInUse = null;
+    function logoPluginFound() {
+        return LOGO_IDS.some(id => document.getElementById(id));
+    }
+
+    function readStationLogo() {
+        LOGO_IDS.forEach(id => {
+            const src = document.getElementById(id)?.src || '';
+            if (logoSources[id] && src !== logoSources[id]) logoInUse = id;
+            logoSources[id] = src;
+        });
+        return logoSources[logoInUse || (window.innerWidth <= 768 ? 'station-logo-phone' : 'station-logo')] || logoSources['station-logo'] || '';
+    }
+
     function readTunerSetup() {
         const ant = document.querySelector('.data-ant input');
         const bw = document.querySelector('.data-bw input');
@@ -639,13 +830,15 @@
         if (sigRaw !== rec.lastSigRaw || now - rec.lastSignalAt >= SIGNAL_KEEPALIVE_MS) {
             const parts = sigRaw.split(',');
             const sig = Number.parseFloat(data.sig);
+            const bw = parts.length > 3 ? Number.parseFloat(parts[3]) : NaN;
             rec.signal.push([
                 now,
                 Number.isFinite(sig) ? Math.round(sig * 100) / 100 : null,
                 parts.length > 1 ? parseQuality(parts[1]) : null,
                 parts.length > 2 ? parseQuality(parts[2]) : null,
                 data.st ? 1 : 0,
-                data.stForced ? 1 : 0
+                data.stForced ? 1 : 0,
+                Number.isFinite(bw) ? bw : null
             ]);
             rec.lastSigRaw = sigRaw;
             rec.lastSignalAt = now;
@@ -653,11 +846,12 @@
 
         const txInfo = data.txInfo || {};
         const tuner = readTunerSetup();
+        const logo = readStationLogo();
         const rdsKey = [
             data.freq, data.pi, data.ps, data.ps_errors, data.rt0, data.rt1, data.rt0_errors, data.rt1_errors,
             data.pty, data.tp, data.ta, data.ms, data.ecc, data.country_iso,
             txInfo.tx, txInfo.city, txInfo.itu, txInfo.erp, txInfo.pol, txInfo.dist, txInfo.azi, txInfo.reg, txInfo.pi,
-            tuner.ant, tuner.bw, data.users
+            tuner.ant, tuner.bw, data.users, data.rds, logo, data.lps
         ].join('\u0001');
         if (rdsKey === rec.lastRdsKey) return;
         rec.lastRdsKey = rdsKey;
@@ -673,6 +867,7 @@
             pi: String(data.pi || ''),
             ps: String(data.ps || ''),
             pse: String(data.ps_errors || ''),
+            lps: String(data.lps || ''),
             rt0: String(data.rt0 || ''),
             rt1: String(data.rt1 || ''),
             rte0: String(data.rt0_errors || ''),
@@ -697,7 +892,9 @@
             regularPi: txInfo.reg === true ? String(txInfo.pi || '') : '',
             ant: tuner.ant,
             bw: tuner.bw,
-            users: Number.isFinite(users) ? users : null
+            users: Number.isFinite(users) ? users : null,
+            rds: data.rds ? 1 : 0,
+            logo
         });
     }
 
@@ -826,23 +1023,31 @@
                 rds: sliceSamples(rec.rds, startedAt, stoppedAt, sample => sample.t, (sample, offset) => ({ ...sample, t: offset })),
                 forcedMonoIsMpx: FORCED_MONO_IS_MPX
             };
-            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt, averageSignal ? signalReadingMs(rec) : 0);
-            const serverName = showServerName ? (await loadTunerName() || String(document.querySelector('#tuner-name span')?.textContent || '').trim()) : '';
-            if (serverName) frames.forEach(frame => { frame.view.title = serverName; });
-            const [audio, flags] = await Promise.all([
+            const logoUrls = indexRecordingLogos(data.rds);
+            const readingMs = signalReadingMs(rec);
+            const withMetrics = metricsStyle;
+            const [audio] = await Promise.all([
                 new Blob(rec.audio.map(([, data]) => data)).arrayBuffer(),
-                loadRecordingVideoFlags(frames),
                 loadScript(`${SCRIPT_BASE}videorec-video.js`, () => window.VideoRecVideo),
                 loadRobotoMono()
             ]);
             if (controller.signal.aborted) return;
-            let layout = await measureRecordingVideoLayout(width / height, useTheme);
+            const metrics = withMetrics ? buildMetricsTimeline(data, await measureAudioPeaks(audio, controller.signal), readingMs) : null;
+            const frames = buildRecordingVideoFrames(data, computeRecordingPeaks(data), getPtyNames(), getSignalUnit(), timestampAt, averageSignal ? readingMs : 0, metrics);
+            const serverName = showServerName ? (await loadTunerName() || String(document.querySelector('#tuner-name span')?.textContent || '').trim()) : '';
+            if (serverName) frames.forEach(frame => { frame.view.title = serverName; });
+            const flags = await loadRecordingVideoFlags(frames);
+            const logos = stationLogo ? await loadRecordingVideoLogos(logoUrls) : new Map();
+            if (controller.signal.aborted) return;
+            const parts = { metrics: withMetrics, logo: logos.size > 0, lps: data.rds.some(sample => String(sample.lps || '').trim()) };
+            let layout = await measureRecordingVideoLayout(width / height, useTheme, parts);
             if (useTheme && !canvasDrawsColors(layout)) {
                 console.info(`[${pluginName}] This browser can't draw the webserver theme's colours, using the default look.`);
-                layout = await measureRecordingVideoLayout(width / height, false);
+                layout = await measureRecordingVideoLayout(width / height, false, parts);
             }
+            const videoLogos = prepareRecordingVideoLogos(logos, layout.logo, height / layout.height);
             if (controller.signal.aborted) return;
-            const blob = await window.VideoRecVideo.createMp4({
+            const { mp4, quickTime } = await window.VideoRecVideo.createMp4({
                 width,
                 height,
                 qp: settings.qp,
@@ -850,17 +1055,20 @@
                 frames,
                 endMs: data.durationMs,
                 audio,
-                draw: (ctx, frame) => drawRecordingVideoFrame(ctx, frame.view, layout, flags),
+                draw: (ctx, frame) => drawRecordingVideoFrame(ctx, frame.view, layout, flags, videoLogos),
                 onProgress: progress => {
                     if (encoding === controller) setButton('busy', `${Math.floor(progress * 100)}%`);
                 },
                 signal: controller.signal,
-                creationTime: startedAt
+                creationTime: startedAt,
+                quickTimeCopy
             });
             if (controller.signal.aborted) return;
-            downloadBlob(blob, rec.filename);
+            downloadBlob(mp4, rec.filename);
+            if (quickTime) setTimeout(() => downloadBlob(quickTime, rec.filename.replace(/\.mp4$/, '_QuickTime.mp4')), QUICKTIME_COPY_DELAY_MS);
             const name = rec.filename;
-            notify('success', 'Video recording complete', navigator.userAgent.indexOf('Chrome') === -1 && name.length > 28 ? name.slice(0, 16) + '...' + name.slice(-12) : name);
+            const shown = navigator.userAgent.indexOf('Chrome') === -1 && name.length > 28 ? name.slice(0, 16) + '...' + name.slice(-12) : name;
+            notify('success', 'Video recording complete', quickTime ? `${shown} + QuickTime copy` : shown);
         } catch (error) {
             if (error?.name !== 'AbortError') notify('error', 'Video recording failed', error?.message || String(error));
         } finally {
@@ -997,6 +1205,7 @@
             aci: quality(sig?.[3]),
             ps: rds?.ps || '',
             psErrors: rds?.pse || '',
+            lps: String(rds?.lps || '').trim(),
             pi: rds?.pi || '-',
             regularPi: rds?.regularPi || '',
             freq: Number.isFinite(rds?.f) ? `${rds.f.toFixed(3)} MHz` : '-',
@@ -1005,6 +1214,11 @@
                 .map(([text, errors]) => ({ text: String(text || '').trimEnd(), errors: String(errors || '') }))
                 .filter(line => line.text.trim()),
             pty: Number.isInteger(rds?.pty) ? (ptyNames[rds.pty] || '') : '',
+            ptyCode: Number.isInteger(rds?.pty) ? rds.pty : 0,
+            rds: rds?.rds === 1,
+            logo: Number.isInteger(rds?.logo) ? rds.logo : -1,
+            ecc: Number.isFinite(rds?.ecc),
+            bw: Number.isFinite(sig?.[6]) ? `${Math.floor(sig[6])} kHz` : '',
             tp: rds?.tp === 1,
             ta: rds?.ta === 1,
             music: ms === 1,
@@ -1024,8 +1238,8 @@
         };
     }
 
-    // averageMs: reading interval for "Average Signal", 0 = off.
-    function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null, averageMs = 0) {
+    // averageMs: reading interval for "Average Signal", 0 = off. metrics: "Metrics Monitor Style" meters, null = off.
+    function buildRecordingVideoFrames(data, peaks, ptyNames, unit, timestampAt = null, averageMs = 0, metrics = null) {
         const end = Math.max(0, Number(data.durationMs) || 0);
         const withTime = typeof timestampAt === 'function' && Number.isFinite(data.startedAt);
         const times = new Set([0]);
@@ -1037,11 +1251,13 @@
             const readings = recordingSignalReadings(data.signal, i, averageMs);
             for (let m = 1; m < Math.min(readings.count, SIGNAL_AVERAGE_READINGS); m++) times.add(Math.ceil(sample[0] + m * readings.spacing));
         });
+        if (metrics) for (let t = METRICS_FRAME_MS; t < end; t += METRICS_FRAME_MS) times.add(t);
         const frames = [];
         let lastKey = null;
         [...times].filter(t => t === 0 || (t > 0 && t < end)).sort((a, b) => a - b).forEach(t => {
             const view = getRecordingView(data, peaks, ptyNames, unit, t, averageMs);
             if (withTime) view.time = timestampAt(data.startedAt + t);
+            if (metrics) view.mm = metrics.at(t);
             const key = JSON.stringify(view);
             if (key === lastKey) return;
             lastKey = key;
@@ -1064,6 +1280,339 @@
         return flags;
     }
 
+    // Logo addresses become numbers, so frames stay small and quick to compare. Returns the addresses in number order.
+    function indexRecordingLogos(rds) {
+        const ids = new Map();
+        rds.forEach(sample => {
+            if (!sample.logo) {
+                sample.logo = -1;
+                return;
+            }
+            if (!ids.has(sample.logo)) ids.set(sample.logo, ids.size);
+            sample.logo = ids.get(sample.logo);
+        });
+        return [...ids.keys()];
+    }
+
+    // A canvas can only use another site's image if that site allows it (CORS), so those are fetched again in that mode,
+    // past any copy the logo plugin cached without it. Logos that aren't allowed or don't load are left out.
+    async function loadRecordingVideoLogos(urls) {
+        const logos = new Map();
+        await Promise.all(urls.map(async (url, index) => {
+            const image = new Image();
+            const address = new URL(url, window.location.href);
+            if (/^https?:$/.test(address.protocol) && address.origin !== window.location.origin) {
+                image.crossOrigin = 'anonymous';
+                address.searchParams.set('videorec', '1');
+            }
+            image.src = address.href;
+            try {
+                await Promise.race([image.decode(), new Promise((_, reject) => setTimeout(reject, LOGO_TIMEOUT_MS))]);
+                logos.set(index, image);
+            } catch (_error) {}
+        }));
+        return logos;
+    }
+
+    // Each logo resized once to its exact pixel size in the video. A canvas shrinking an image more than 2x in one go skips
+    // pixels and leaves jagged edges, so bitmaps are halved step by step first. Vector logos are drawn straight at the size.
+    function prepareRecordingVideoLogos(logos, area, scale) {
+        const prepared = new Map();
+        if (!area) return prepared;
+        logos.forEach((image, index) => {
+            const maxWidth = area.w * LOGO_WIDTH;
+            const ratio = image.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : maxWidth / area.h;
+            const width = Math.min(maxWidth, area.h * ratio);
+            const height = width / ratio;
+            const targetW = Math.max(1, Math.round(width * scale));
+            const targetH = Math.max(1, Math.round(height * scale));
+            const draw = (source, w, h) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(source, 0, 0, w, h);
+                return canvas;
+            };
+            let source = image;
+            if (!/\.svg([?#]|$)|^data:image\/svg/i.test(image.src)) {
+                let w = image.naturalWidth;
+                let h = image.naturalHeight;
+                while (w / 2 >= targetW && h / 2 >= targetH) {
+                    w = Math.round(w / 2);
+                    h = Math.round(h / 2);
+                    source = draw(source, w, h);
+                }
+            }
+            prepared.set(index, {
+                image: draw(source, targetW, targetH),
+                x: Math.round((area.x + (area.w - width) / 2) * scale),
+                y: Math.round((area.y + (area.h - height) / 2) * scale)
+            });
+        });
+        return prepared;
+    }
+
+    // ---- Metrics Monitor Style ----
+
+    function metricsMeterHtml(key, label, unit, scale) {
+        const ticks = scale ? `<span class="vr-mm-scale">${scale.map(tick => `<span data-mm-tick="${key}">${tick}</span>`).join('')}</span>` : '';
+        return `<div class="vr-mm-meter">${ticks}<span class="vr-mm-col"><span class="vr-mm-unit" data-mm-unit="${key}">${unit}</span><span class="vr-mm-bar" data-mm-bar="${key}"></span><span class="vr-mm-label" data-mm-label="${key}">${label}</span></span></div>`;
+    }
+
+    function metricsRgb(value) {
+        const match = String(value).match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : [0, 255, 0];
+    }
+
+    function metricsShade(rgb, intensity) {
+        return `rgb(${rgb.map(channel => Math.min(255, Math.round(channel * intensity))).join(',')})`;
+    }
+
+    // MetricsMonitor's segment colours: LEFT/RIGHT green with the top 5 red, ACI/CCI green to 10%, yellow to 30%, red above.
+    const METRICS_STEREO_COLORS = Array.from({ length: METRICS_SEGMENTS }, (_, i) => (i >= METRICS_SEGMENTS - 5
+        ? metricsShade(metricsRgb(METRICSMONITOR.colorDanger), 0.8 + 0.2 * (i / METRICS_SEGMENTS))
+        : metricsShade(metricsRgb(METRICSMONITOR.colorSafe), 0.4 + (i / METRICS_SEGMENTS) * 0.6)));
+    const METRICS_QUALITY_COLORS = Array.from({ length: METRICS_SEGMENTS }, (_, i) => {
+        const yellow = Math.round(0.1 * METRICS_SEGMENTS);
+        const red = Math.round(0.3 * METRICS_SEGMENTS);
+        if (i < yellow) return metricsShade(metricsRgb(METRICSMONITOR.colorSafe), 0.45 + 0.3 * (i / Math.max(1, yellow - 1)));
+        if (i < red) return metricsShade(metricsRgb(METRICSMONITOR.colorWarning), 0.6 + 0.4 * ((i - yellow) / Math.max(1, red - yellow)));
+        return metricsShade(metricsRgb(METRICSMONITOR.colorDanger), 0.6 + 0.4 * ((i - red) / Math.max(1, METRICS_SEGMENTS - red)));
+    });
+
+    // Loudest sample in every block, per channel, for LEFT/RIGHT. Decoded in parts, so a long recording doesn't fill the memory.
+    async function measureAudioPeaks(audio, signal) {
+        const mp3 = window.VideoRecVideo.parseMp3(audio);
+        const perFrame = mp3.samplesPerFrame;
+        const blocks = Math.ceil(mp3.frames.length * perFrame / METRICS_BLOCK_SAMPLES);
+        const left = new Float32Array(blocks);
+        const right = new Float32Array(blocks);
+        const context = new OfflineAudioContext(mp3.channels, 1, mp3.sampleRate);
+        for (let start = 0; start < mp3.frames.length; start += METRICS_DECODE_FRAMES) {
+            if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+            // Two frames before each part prime the decoder, their samples are dropped.
+            const from = Math.max(0, start - 2);
+            const end = Math.min(mp3.frames.length, start + METRICS_DECODE_FRAMES);
+            const part = mp3.frames.slice(from, end);
+            const bytes = new Uint8Array(part.reduce((sum, frame) => sum + frame.length, 0));
+            part.reduce((offset, frame) => {
+                bytes.set(frame, offset);
+                return offset + frame.length;
+            }, 0);
+            let decoded;
+            try {
+                decoded = await context.decodeAudioData(bytes.buffer);
+            } catch (_error) {
+                continue;
+            }
+            const skip = (start - from) * perFrame;
+            const base = start * perFrame;
+            const count = Math.min((end - start) * perFrame, decoded.length - skip);
+            const channelL = decoded.getChannelData(0);
+            const channelR = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : channelL;
+            for (let i = 0; i < count; i++) {
+                const block = Math.floor((base + i) / METRICS_BLOCK_SAMPLES);
+                const l = Math.abs(channelL[skip + i]);
+                const r = Math.abs(channelR[skip + i]);
+                if (l > left[block]) left[block] = l;
+                if (r > right[block]) right[block] = r;
+            }
+        }
+        return { left, right, sampleRate: mp3.sampleRate };
+    }
+
+    // MetricsMonitor's meters played through at its redraw rate. LEFT/RIGHT rise 0.8 and fall 0.6 of the way per redraw and
+    // hold their peak 5 s, ACI/CCI and multipath blank on a frequency change and hold their peak 0.2 s.
+    function buildMetricsTimeline(data, audio, readingMs) {
+        const end = Math.max(0, Number(data.durationMs) || 0);
+        const steps = Math.floor(end / METRICS_STEP_MS) + 1;
+        const values = new Int8Array(steps * 9);
+        const boost = Number(window.MetricsMonitor?.Config?.StereoBoost) || METRICSMONITOR.stereoBoost;
+        // It reads the first message at least 250 ms after the last one it read.
+        const updateMs = Math.ceil(METRICS_UPDATE_MS / readingMs) * readingMs;
+        const toPercent = amplitude => {
+            if (amplitude < 0.00001) return 0;
+            return Math.max(0, Math.min(100, (20 * Math.log10(amplitude * boost) + 26) / 31 * 100));
+        };
+        const toMultipath = raw => {
+            if (METRICSMONITOR.multipathMode !== 1) return Math.min(99, Math.max(0, Math.trunc(raw)));
+            if (raw <= 3) return 0;
+            if (raw >= 40) return 99;
+            return Math.trunc((raw - 3) / 37 * 99);
+        };
+        const holdPeak = (peak, current, now, holdMs, decay) => {
+            if (current < 0) {
+                peak.value = -1;
+                return;
+            }
+            if (current >= peak.value) {
+                peak.value = current;
+                peak.at = now;
+            } else if (now - peak.at > holdMs) {
+                peak.value = Math.max(current, peak.value - decay);
+                if (peak.value <= current + 0.5) peak.value = current;
+            }
+        };
+        const segments = level => (level < 0 ? 0 : Math.round(level / 100 * METRICS_SEGMENTS));
+        const peakSegment = value => (value < 0 ? -1 : Math.max(0, Math.min(METRICS_SEGMENTS - 1, Math.round(value / 100 * METRICS_SEGMENTS) - 1)));
+        const loudest = (list, endSample) => {
+            const last = Math.min(list.length, Math.ceil(endSample / METRICS_BLOCK_SAMPLES));
+            let max = 0;
+            for (let b = Math.max(0, Math.floor((endSample - METRICS_WINDOW_SAMPLES) / METRICS_BLOCK_SAMPLES)); b < last; b++) {
+                if (list[b] > max) max = list[b];
+            }
+            return max;
+        };
+        const valid = value => (Number.isFinite(value) && value >= 0 && value <= 100 ? value : -1);
+        const signal = data.signal || [];
+        const rds = data.rds || [];
+        const peaks = { left: { value: 0, at: 0 }, right: { value: 0, at: 0 }, aci: { value: 0, at: 0 }, cci: { value: 0, at: 0 } };
+        let left = 0;
+        let right = 0;
+        let aci = -1;
+        let cci = -1;
+        let multipath = -1;
+        let rdsIndex = -1;
+        let freq;
+        let nextUpdate = 0;
+        for (let k = 0; k < steps; k++) {
+            const t = k * METRICS_STEP_MS;
+            while (rdsIndex + 1 < rds.length && rds[rdsIndex + 1].t <= t) {
+                rdsIndex++;
+                if (freq !== undefined && rds[rdsIndex].f !== freq) {
+                    aci = cci = multipath = -1;
+                    nextUpdate = Math.max(nextUpdate, rds[rdsIndex].t + readingMs);
+                }
+                freq = rds[rdsIndex].f;
+            }
+            if (t >= nextUpdate) {
+                const sample = signal[findRecordingIndex(signal, t, s => s[0])];
+                cci = valid(sample?.[2]);
+                aci = valid(sample?.[3]);
+                // Multipath is the same reading as CCI, shown above 25 dBf.
+                multipath = Number.isFinite(sample?.[1]) && Math.trunc(sample[1]) > 25 && cci >= 0 ? toMultipath(cci) : -1;
+                nextUpdate = t + updateMs;
+            }
+            const endSample = Math.round(t / 1000 * audio.sampleRate);
+            const rawLeft = toPercent(loudest(audio.left, endSample));
+            const rawRight = toPercent(loudest(audio.right, endSample));
+            left += (rawLeft - left) * (rawLeft > left ? 0.8 : 0.6);
+            right += (rawRight - right) * (rawRight > right ? 0.8 : 0.6);
+            // Its audio and render loops both update the LEFT/RIGHT peaks every redraw.
+            for (let pass = 0; pass < 2; pass++) {
+                holdPeak(peaks.left, left, t, 5000, 2);
+                holdPeak(peaks.right, right, t, 5000, 2);
+            }
+            holdPeak(peaks.aci, aci, t, 200, 8);
+            holdPeak(peaks.cci, cci, t, 200, 8);
+            values.set([
+                segments(left), segments(right), peakSegment(peaks.left.value), peakSegment(peaks.right.value),
+                segments(aci), segments(cci), peakSegment(peaks.aci.value), peakSegment(peaks.cci.value), multipath
+            ], k * 9);
+        }
+        return {
+            at(t) {
+                const o = Math.min(steps - 1, Math.floor(t / METRICS_STEP_MS + 1e-9)) * 9;
+                return { l: values[o], r: values[o + 1], lp: values[o + 2], rp: values[o + 3], a: values[o + 4], c: values[o + 5], ap: values[o + 6], cp: values[o + 7], mp: values[o + 8] };
+            }
+        };
+    }
+
+    function drawMetricsPanel(ctx, view, m, flags) {
+        const mm = view.mm;
+        const panel = m.signalBox;
+        canvasRoundRect(ctx, panel.x, panel.y, panel.w, panel.h, Math.min(panel.radius, panel.w / 2, panel.h / 2));
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = panel.background;
+        ctx.fill();
+        const color = on => (on ? METRICS_ON : METRICS_OFF);
+        const outline = (b, stroke) => {
+            const inset = b.border / 2;
+            canvasRoundRect(ctx, b.x + inset, b.y + inset, b.w - b.border, b.h - b.border, Math.max(0, b.radius - inset));
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = stroke;
+            ctx.lineWidth = b.border;
+            ctx.stroke();
+        };
+        const badge = (b, text, on) => {
+            outline(b, color(on));
+            drawLayoutText(ctx, { ...b.text, color: color(on), alpha: 1 }, text);
+        };
+
+        // ECC: the country flag once ECC has been received, otherwise a grey badge.
+        const flag = view.ecc ? flags.get(view.flagIso) : null;
+        if (flag) {
+            const e = m.ecc;
+            const w = flag.naturalWidth && flag.naturalHeight ? e.h * flag.naturalWidth / flag.naturalHeight : e.h * 4 / 3;
+            const x = e.x + (e.w - w) / 2;
+            ctx.save();
+            canvasRoundRect(ctx, x, e.y, w, e.h, e.radius);
+            ctx.clip();
+            ctx.globalAlpha = 1;
+            ctx.drawImage(flag, x, e.y, w, e.h);
+            ctx.restore();
+        } else {
+            badge(m.ecc, 'ECC', false);
+        }
+
+        // Two circles for stereo, one for mono or forced mono, lit while there's a pilot.
+        const s = m.stereo;
+        const lineWidth = s.h * 0.1;
+        const radius = (s.h - lineWidth) / 2;
+        const centers = view.stereo && !view.stereoForced ? [s.x + s.h / 2, s.x + s.w - s.h / 2] : [s.x + s.w / 2];
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = color(view.stereo);
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        centers.forEach(x => {
+            ctx.moveTo(x + radius, s.y + s.h / 2);
+            ctx.arc(x, s.y + s.h / 2, radius, 0, Math.PI * 2);
+        });
+        ctx.stroke();
+
+        const ptyOn = view.ptyCode > 0 && Boolean(view.pty);
+        outline(m.pty, ptyOn ? '#fff' : METRICS_OFF);
+        drawLayoutText(ctx, { ...(ptyOn ? m.pty.on : m.pty.text), color: ptyOn ? '#fff' : METRICS_OFF, alpha: 1 }, ptyOn ? view.pty : 'PTY');
+        badge(m.tp, 'TP', view.tp);
+        badge(m.ta, 'TA', view.ta);
+        drawLayoutText(ctx, { ...m.rds, color: color(view.rds), alpha: 1 }, m.rds.text, 'left');
+
+        const meter = (key, active, peakIndex, colors, peakColor) => {
+            const { bar, unit, label, ticks } = m.meters[key];
+            const segment = bar.h / METRICS_SEGMENTS;
+            const line = segment * 0.2;
+            ctx.globalAlpha = 1;
+            for (let i = 0; i < METRICS_SEGMENTS; i++) {
+                const top = bar.y + bar.h - (i + 1) * segment;
+                ctx.fillStyle = i === peakIndex ? peakColor(i) : (i < active ? colors[i] : '#333');
+                ctx.fillRect(bar.x, top, bar.w, segment - line);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(bar.x, top + segment - line, bar.w, line);
+            }
+            drawLayoutText(ctx, unit, unit.text);
+            drawLayoutText(ctx, label, label.text);
+            ticks.forEach(tick => {
+                setLayoutFont(ctx, tick);
+                fillCanvasText(ctx, tick.text, tick.right - measureCanvasText(ctx, tick.text, false), tick.baseline, false);
+            });
+        };
+        const stereoPeak = i => (METRICSMONITOR.peakMode === 'fixed' ? METRICSMONITOR.peakColorFixed : METRICS_STEREO_COLORS[i]);
+        const qualityPeak = i => METRICS_QUALITY_COLORS[i];
+        meter('left', mm.l, mm.lp, METRICS_STEREO_COLORS, stereoPeak);
+        meter('right', mm.r, mm.rp, METRICS_STEREO_COLORS, stereoPeak);
+        meter('aci', mm.a, mm.ap, METRICS_QUALITY_COLORS, qualityPeak);
+        meter('cci', mm.c, mm.cp, METRICS_QUALITY_COLORS, qualityPeak);
+
+        drawLayoutText(ctx, m.heading, m.heading.text);
+        if (view.bw) drawLayoutRuns(ctx, m.bw.line, [[m.bw.icon, m.bw.icon.text], [m.bw.line, ' '], [m.bw.value, view.bw]]);
+        const peak = view.peak.replace(/^\u{2191} /u, '');
+        if (peak) drawLayoutRuns(ctx, m.peak.line, [[m.peak.icon, m.peak.icon.text], [m.peak.line, ' '], [m.peak.value, peak]]);
+        drawLayoutRuns(ctx, m.value.line, [[m.value.int, view.signal.int], [m.value.dec, view.signal.dec], [m.value.line, ' '], [m.value.unit, view.signal.unit]]);
+        drawLayoutRuns(ctx, m.mp.line, [[m.mp.label, m.mp.label.text], [m.mp.line, ' '], [m.mp.value, mm.mp < 0 ? '--%' : `${mm.mp}%`]]);
+    }
+
     // ---- Layout and drawing ----
 
     function canvasFontOf(style) {
@@ -1071,11 +1620,12 @@
     }
 
     // Shadow root, so the page's CSS can't reach it.
-    async function measureRecordingVideoLayout(aspect, themed = false) {
+    // parts: { metrics, logo, lps } picks the layout.
+    async function measureRecordingVideoLayout(aspect, themed = false, parts = {}) {
         const host = document.createElement('div');
         host.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
         const root = host.attachShadow({ mode: 'open' });
-        root.innerHTML = `<style>${PANEL_CSS}${themed ? THEME_CSS : ''}</style><div class="vr-stage">${HEADER_HTML}<div class="vr-body">${PANEL_HTML}</div></div>`;
+        root.innerHTML = `<style>${PANEL_CSS}${themed ? THEME_CSS : ''}</style><div class="vr-stage">${HEADER_HTML}<div class="vr-body">${parts.metrics ? metricsPanelHtml(parts) : panelHtml(parts)}</div></div>`;
         const stage = root.querySelector('.vr-stage');
         const header = root.querySelector('.vr-header');
         const titleEl = header.querySelector('.vr-title');
@@ -1128,7 +1678,8 @@
                 }
                 return alpha;
             };
-            const textStyle = el => {
+            // areaEl: what the text is centred in, its cell unless given.
+            const textStyle = (el, areaEl = null) => {
                 if (!el) return null;
                 const style = getComputedStyle(el);
                 // Baseline probe.
@@ -1138,7 +1689,7 @@
                 const baseline = probe.getBoundingClientRect().bottom - origin.top;
                 probe.remove();
                 const own = contentBox(el);
-                const area = contentBox(el.closest('.vr-cell') || header);
+                const area = contentBox(areaEl || el.closest('.vr-cell') || header);
                 return {
                     text: el.textContent,
                     font: canvasFontOf(style),
@@ -1161,7 +1712,7 @@
 
             const field = key => panel.querySelector(`[data-vr="${key}"]`);
             const text = {};
-            ['ps', 'aci', 'cci', 'pty', 'tp', 'ta', 'music', 'speech', 'pi', 'regularPi', 'freq', 'tuner', 'peak',
+            ['ps', 'lps', 'aci', 'cci', 'pty', 'tp', 'ta', 'music', 'speech', 'pi', 'regularPi', 'freq', 'tuner', 'peak',
                 'sigInt', 'sigDec', 'sigUnit', 'rt', 'txName', 'txCity', 'txPower', 'txDist', 'txAzi'].forEach(key => {
                 text[key] = textStyle(field(key));
             });
@@ -1191,6 +1742,63 @@
             const flagsRow = panel.querySelector('.vr-flags');
             const headerStyle = getComputedStyle(header);
             const title = textStyle(titleEl);
+
+            const mmField = key => panel.querySelector(`[data-mm="${key}"]`);
+            const mmCell = panel.querySelector('.vr-mm-cell');
+            let metricsLayout = null;
+            let rdsBackground = '';
+            if (mmCell) {
+                const own = el => ({ ...textStyle(el, el), maxWidth: Infinity });
+                const inSignal = key => textStyle(mmField(key), mmField('signal'));
+                // Browsers put Titillium's baseline in a short line differently, so ECC/PTY centre the capitals instead.
+                const capCentred = (style, el) => {
+                    if (!el.classList.contains('vr-mm-text')) return style;
+                    const ctx = document.createElement('canvas').getContext('2d');
+                    ctx.font = style.font.replace(/[\d.]+px/, '100px');
+                    const cap = ctx.measureText('H').actualBoundingBoxAscent * px(getComputedStyle(el).fontSize) / 100;
+                    if (!(cap > 0)) return style;
+                    const area = contentBox(el);
+                    return { ...style, baseline: area.y + (area.h + cap) / 2 };
+                };
+                const badge = key => {
+                    const el = mmField(key);
+                    const s = getComputedStyle(el);
+                    return { ...box(el), border: px(s.borderTopWidth), radius: px(s.borderTopLeftRadius), text: capCentred(own(el), el) };
+                };
+                const ptyEl = mmField('pty');
+                const pty = { ...badge('pty'), text: capCentred(textStyle(ptyEl, ptyEl), ptyEl) };
+                ptyEl.classList.add('vr-mm-on');
+                pty.on = capCentred(textStyle(ptyEl, ptyEl), ptyEl);
+                ptyEl.classList.remove('vr-mm-on');
+                mmCell.classList.add('vr-mm-rds-on');
+                rdsBackground = getComputedStyle(mmCell).backgroundColor;
+                mmCell.classList.remove('vr-mm-rds-on');
+                const meterPart = (part, key) => panel.querySelector(`[data-mm-${part}="${key}"]`);
+                metricsLayout = {
+                    ecc: badge('ecc'),
+                    tp: badge('tp'),
+                    ta: badge('ta'),
+                    pty,
+                    stereo: box(mmField('stereo')),
+                    rds: own(mmField('rds')),
+                    // On the webserver this box is also a panel, so its background is drawn again over MetricsMonitor's.
+                    signalBox: (() => {
+                        const s = getComputedStyle(mmField('signal'));
+                        return { ...box(mmField('signal')), radius: px(s.borderTopLeftRadius), background: s.backgroundColor };
+                    })(),
+                    meters: Object.fromEntries(['left', 'right', 'aci', 'cci'].map(key => [key, {
+                        bar: contentBox(meterPart('bar', key)),
+                        unit: own(meterPart('unit', key)),
+                        label: own(meterPart('label', key)),
+                        ticks: [...panel.querySelectorAll(`[data-mm-tick="${key}"]`)].map(tick => own(tick))
+                    }])),
+                    heading: inSignal('heading'),
+                    bw: { line: inSignal('bw'), icon: inSignal('bwIcon'), value: inSignal('bwText') },
+                    peak: { line: inSignal('peak'), icon: inSignal('peakIcon'), value: inSignal('peakText') },
+                    value: { line: inSignal('value'), int: inSignal('int'), dec: inSignal('dec'), unit: inSignal('unit') },
+                    mp: { line: inSignal('mp'), label: inSignal('mpLabel'), value: inSignal('mpValue') }
+                };
+            }
             return {
                 height: stage.getBoundingClientRect().height,
                 background: getComputedStyle(body).backgroundColor,
@@ -1210,9 +1818,15 @@
                 },
                 cells: [...panel.querySelectorAll('.vr-cell')].map(cell => {
                     const s = getComputedStyle(cell);
-                    return { ...box(cell), radius: px(s.borderTopLeftRadius), background: s.backgroundColor, border: px(s.borderTopWidth), borderColor: s.borderTopColor };
+                    return {
+                        ...box(cell), radius: px(s.borderTopLeftRadius), background: s.backgroundColor, border: px(s.borderTopWidth), borderColor: s.borderTopColor,
+                        // The MetricsMonitor panel turns lighter while RDS is received.
+                        rds: cell === mmCell ? { background: rdsBackground } : null
+                    };
                 }),
-                labels: [...panel.querySelectorAll('.vr-label')].map(textStyle),
+                labels: [...panel.querySelectorAll('.vr-label')].map(el => textStyle(el)),
+                logo: panel.querySelector('.vr-logo') ? contentBox(panel.querySelector('.vr-logo')) : null,
+                metrics: metricsLayout,
                 text,
                 rtLines: text.rt ? Math.max(1, Math.floor((text.rt.bottom - text.rt.top) / text.rt.lineHeight + 0.01)) : 0,
                 dim: Number.isFinite(dim) ? dim : 0.2,
@@ -1342,7 +1956,7 @@
         ctx.closePath();
     }
 
-    function drawRecordingVideoFrame(ctx, view, layout, flags) {
+    function drawRecordingVideoFrame(ctx, view, layout, flags, logos = new Map()) {
         const scale = ctx.canvas.height / layout.height;
         const width = ctx.canvas.width / scale;
         ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -1375,7 +1989,7 @@
             const inset = cell.border / 2;
             const radius = Math.min(Math.max(0, cell.radius - inset), cell.w / 2, cell.h / 2);
             canvasRoundRect(ctx, cell.x + inset, cell.y + inset, cell.w - cell.border, cell.h - cell.border, radius);
-            ctx.fillStyle = cell.background;
+            ctx.fillStyle = cell.rds && view.rds ? cell.rds.background : cell.background;
             ctx.fill();
             if (cell.border) {
                 ctx.strokeStyle = cell.borderColor;
@@ -1384,6 +1998,15 @@
             }
         });
         layout.labels.forEach(label => drawLayoutText(ctx, label, label?.text));
+
+        // Already at its video size, so copied pixel for pixel.
+        const logo = layout.logo ? logos.get(view.logo) : null;
+        if (logo) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha = 1;
+            ctx.drawImage(logo.image, logo.x, logo.y);
+            ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        }
 
         const t = layout.text;
         if (t.ps) {
@@ -1397,6 +2020,7 @@
                 ctx.fillText(ps[i], left + charWidth * i, t.ps.baseline);
             }
         }
+        drawLayoutText(ctx, t.lps, view.lps);
         drawLayoutText(ctx, t.aci, view.aci);
         drawLayoutText(ctx, t.cci, view.cci);
         drawLayoutText(ctx, t.pty, view.pty);
@@ -1473,6 +2097,7 @@
                 [t.txDist, tx.dist], [t.txMetaLine, ' '], [t.txSep, sep], [t.txMetaLine, ' '], [t.txAzi, tx.azi]
             ]);
         }
+        if (layout.metrics && view.mm) drawMetricsPanel(ctx, view, layout.metrics, flags);
         ctx.globalAlpha = 1;
     }
 

@@ -353,7 +353,8 @@
     }
 
     // MP3 inside MP4: object type 0x6B (MPEG-1 audio) or 0x69 (MPEG-2 audio), no decoder-specific info.
-    function mp4a(audio) {
+    // QuickTime only plays it under Apple's '.mp3' entry, which Firefox refuses.
+    function mp3Entry(audio, quickTime) {
         const decoderConfig = concatBytes([
             u8(audio.mpeg1 ? 0x6B : 0x69), u8(0x15), u24(audio.maxFrameBytes), u32(audio.bitrate), u32(audio.bitrate)
         ]);
@@ -362,7 +363,7 @@
             u8(0x04), u8(decoderConfig.length), decoderConfig,
             u8(0x06), u8(1), u8(0x02)
         ]);
-        return box('mp4a', zeros(6), u16(1), zeros(8), u16(audio.channels), u16(16), zeros(4), u32(audio.sampleRate * 65536),
+        return box(quickTime ? '.mp3' : 'mp4a', zeros(6), u16(1), zeros(8), u16(audio.channels), u16(16), zeros(4), u32(audio.sampleRate * 65536),
             fullBox('esds', 0, 0, u8(0x03), u8(esDescriptor.length), esDescriptor));
     }
 
@@ -375,7 +376,7 @@
         return out;
     }
 
-    function buildMp4({ width, height, video, audio, endMs, creationTime }) {
+    function buildMp4({ width, height, video, audio, endMs, creationTime, quickTimeAudio }) {
         const time = Math.floor((Number(creationTime) || Date.now()) / 1000) + MP4_EPOCH_OFFSET_S;
         const videoSamples = video.samples;
         const videoDeltas = videoSamples.map((sample, i) => {
@@ -430,21 +431,23 @@
                     box('minf',
                         fullBox('smhd', 0, 0, zeros(4)),
                         dinf(),
-                        stbl(mp4a(audio), [audio.frames.length, audio.samplesPerFrame],
+                        stbl(mp3Entry(audio, quickTimeAudio), [audio.frames.length, audio.samplesPerFrame],
                             audio.frames.map(frame => frame.length), audioOffsets.map(offset => offset + shift), null)))));
         const moov = makeMoov(ftyp.length + makeMoov(0).length + 8);
         return new Blob([ftyp, moov, u32(position + 8), ascii('mdat'), ...payload], { type: 'video/mp4' });
     }
 
     // frames: [{ t (ms, first at 0, ascending) }], draw(ctx, frame) paints one frame onto the canvas.
-    async function createMp4({ width, height, qp = 18, keyframeIntervalMs = 4000, frames, endMs, draw, audio, onProgress, signal, creationTime }) {
+    // Resolves to { mp4, quickTime }, quickTime is a copy with Apple's MP3 label, only with quickTimeCopy.
+    async function createMp4({ width, height, qp = 18, keyframeIntervalMs = 4000, frames, endMs, draw, audio, onProgress, signal, creationTime, quickTimeCopy = false }) {
         const mp3 = parseMp3(audio);
         if (!mp3.frames.length) throw new Error('No MP3 audio found in the recording.');
         if (!frames.length || frames[0].t !== 0) throw new Error('The video needs a frame at 0 ms.');
         const audioDurationMs = Math.round(mp3.frames.length * mp3.samplesPerFrame * 1000 / mp3.sampleRate);
         const video = await encodeVideo({ width, height, qp, keyframeIntervalMs, frames, draw, onProgress, signal });
-        return buildMp4({ width, height, video, audio: mp3, endMs: Math.max(Number(endMs) || 0, audioDurationMs), creationTime });
+        const mp4 = { width, height, video, audio: mp3, endMs: Math.max(Number(endMs) || 0, audioDurationMs), creationTime };
+        return { mp4: buildMp4(mp4), quickTime: quickTimeCopy ? buildMp4({ ...mp4, quickTimeAudio: true }) : null };
     }
 
-    window.VideoRecVideo = { createMp4 };
+    window.VideoRecVideo = { createMp4, parseMp3 };
 })();

@@ -13,6 +13,12 @@ Original concept taken from the [Audio Recorder Plugin by mrwish7](https://githu
 
 Configuration options found in `pluginVideoRec.js`
 
+v1.4.0
+------
+* Added "MetricsMonitor Style" option to the right-click menu
+* Added "Station Logo" option to the right-click menu if compatible plugin exists
+* Added "QuickTime Compatible Copy" option to the right-click menu
+
 v1.3.1
 ------
 * Added "Average Signal" option to the right-click menu
