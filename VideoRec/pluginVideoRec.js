@@ -144,10 +144,12 @@
     text-align: center;
 }
 .vr-value.vr-rt { align-self: flex-start; text-align: left; width: 100%; }
-.vr-label { font-size: 11px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.04em; }
+/* --vr-grow: "16:9 Aspect Ratio" text growth, RadioText and TX (vr-keep) can't grow */
+.vr-keep { --vr-grow: 1; }
+.vr-label { font-size: calc(11px * var(--vr-grow, 1)); color: #38bdf8; text-transform: uppercase; letter-spacing: 0.04em; }
 .vr-value {
     max-width: 100%;
-    font-size: 22px;
+    font-size: calc(22px * var(--vr-grow, 1));
     line-height: 1.2;
     font-variant-numeric: tabular-nums;
     white-space: pre;
@@ -156,13 +158,13 @@
 }
 .vr-ps {
     font-family: "Roboto Mono", monospace;
-    font-size: 26px;
+    font-size: calc(26px * var(--vr-grow, 1));
     font-weight: 500;
 }
 .vr-rt { font-family: "Roboto Mono", monospace; font-size: 10px; line-height: 1.4; white-space: pre; min-height: 3.4em; }
-.vr-faint, .vr-unit { font-size: 18px; opacity: 0.55; }
-.vr-unit { font-size: 13px; }
-.vr-peak, .vr-sub { min-height: 1.2em; font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.vr-faint, .vr-unit { font-size: calc(18px * var(--vr-grow, 1)); opacity: 0.55; }
+.vr-unit { font-size: calc(13px * var(--vr-grow, 1)); }
+.vr-peak, .vr-sub { min-height: 1.2em; font-size: calc(10px * var(--vr-grow, 1)); opacity: 0.7; font-variant-numeric: tabular-nums; }
 .vr-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vr-lps { font-family: "Roboto Mono", monospace; font-size: 9px; }
 .vr-status { gap: 6px; }
@@ -172,18 +174,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 14px;
+    font-size: calc(14px * var(--vr-grow, 1));
     color: #38bdf8;
 }
-.vr-flags { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 700; }
+.vr-flags { display: flex; align-items: center; gap: calc(12px * var(--vr-grow, 1)); font-size: calc(14px * var(--vr-grow, 1)); font-weight: 700; }
 .vr-dim { opacity: 0.2; }
-.vr-flag-slot { display: inline-flex; justify-content: center; width: 20px; }
-.vr-flag { display: block; width: 20px; height: auto; }
-.vr-stereo { position: relative; display: inline-block; width: 18px; height: 12px; }
-.vr-circle { --vr-circle-line: 1.5px; position: absolute; top: 0; width: 12px; height: 12px; border: var(--vr-circle-line) solid currentColor; border-radius: 50%; }
+.vr-flag-slot { display: inline-flex; justify-content: center; width: calc(20px * var(--vr-grow, 1)); }
+.vr-flag { display: block; width: calc(20px * var(--vr-grow, 1)); height: auto; }
+.vr-stereo { position: relative; display: inline-block; width: calc(18px * var(--vr-grow, 1)); height: calc(12px * var(--vr-grow, 1)); }
+.vr-circle { --vr-circle-line: 1.5px; position: absolute; top: 0; width: calc(12px * var(--vr-grow, 1)); height: calc(12px * var(--vr-grow, 1)); border: var(--vr-circle-line) solid currentColor; border-radius: 50%; }
 .vr-circle1 { left: 0; }
-.vr-circle2 { left: 6px; }
-.vr-stereo-forced .vr-circle1 { left: 3px; }
+.vr-circle2 { left: calc(6px * var(--vr-grow, 1)); }
+.vr-stereo-forced .vr-circle1 { left: calc(3px * var(--vr-grow, 1)); }
 .vr-stereo-forced .vr-circle2 { display: none; }
 .vr-tx-body { max-width: 100%; }
 .vr-tx-body > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -245,8 +247,8 @@
         <div class="vr-cell vr-span-2"><span class="vr-label">PI code</span><span class="vr-sub" data-vr="regularPi"></span><span class="vr-value" data-vr="pi"></span></div>
         <div class="vr-cell vr-span-2"><span class="vr-label">Frequency</span><span class="vr-sub" data-vr="tuner"></span><span class="vr-value" data-vr="freq"></span></div>`;
     const RT_TX_HTML = `
-        <div class="vr-cell vr-span-4"><span class="vr-label">RadioText</span><span class="vr-value vr-rt" data-vr="rt"></span></div>
-        <div class="vr-cell vr-span-2">
+        <div class="vr-cell vr-span-4 vr-keep"><span class="vr-label">RadioText</span><span class="vr-value vr-rt" data-vr="rt"></span></div>
+        <div class="vr-cell vr-span-2 vr-keep">
             <div class="vr-tx-body" data-vr="txBody" hidden>
                 <span class="vr-tx-name" data-vr="txName"></span>
                 <span class="vr-tx-city"><span data-vr="txCity"></span> <span class="vr-tx-small">[<span data-vr="txItu"></span>]</span></span>
@@ -1640,6 +1642,44 @@
         return `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     }
 
+    // "16:9 Aspect Ratio": the widest values the grown text must still fit.
+    const GROW_SAMPLES = { ps: 'MMMMMMMM', aci: '100%', cci: '100%', pi: 'DDDD', freq: '107.900 MHz', sigInt: '-120', sigDec: '.5', sigUnit: `dB${MICRO_SIGN}V` };
+    const PTY_LONGEST = [...PTY_NAMES_RDS, ...PTY_NAMES_RBDS].reduce((longest, name) => (name.length > longest.length ? name : longest), '');
+
+    // A taller video's extra height lets the text outside RadioText and TX grow up to grow times, as far as the widest
+    // values fit their cells and the rows fit the height. PTY grows only as far as its longest name fits.
+    function growRecordingVideoText(stage, panel, grow) {
+        const field = key => panel.querySelector(`[data-vr="${key}"]`);
+        const innerWidth = el => {
+            const s = getComputedStyle(el);
+            return el.clientWidth - (Number.parseFloat(s.paddingLeft) || 0) - (Number.parseFloat(s.paddingRight) || 0);
+        };
+        // 1 or more: fits its cell.
+        const room = el => (el && el.scrollWidth ? (innerWidth(el.closest('.vr-cell')) - 2) / el.scrollWidth : Infinity);
+        const saved = [];
+        const show = (el, text) => {
+            if (!el) return;
+            saved.push([el, el.textContent]);
+            el.textContent = text;
+        };
+        Object.entries(GROW_SAMPLES).forEach(([key, text]) => show(field(key), text));
+        show(field('pty'), PTY_LONGEST);
+        const whole = [field('ps'), field('aci'), field('cci'), field('pi'), field('freq'), field('sigInt')?.parentElement, panel.querySelector('.vr-flags')];
+        let value = grow;
+        for (let i = 0; i < 8; i++) {
+            stage.style.setProperty('--vr-grow', String(value));
+            const fit = Math.min(...whole.map(room));
+            if (fit < 1) value = Math.max(1, value * fit);
+            else if (panel.scrollHeight > panel.clientHeight + 1) value = 1 + (value - 1) * 0.8;
+            else break;
+        }
+        stage.style.setProperty('--vr-grow', String(value));
+        const pty = field('pty');
+        const ptyFit = room(pty);
+        if (ptyFit < 1) pty.style.setProperty('--vr-grow', String(Math.max(1, value * ptyFit)));
+        saved.forEach(([el, text]) => { el.textContent = text; });
+    }
+
     // Shadow root, so the page's CSS can't reach it.
     // parts: { metrics, logo, lps } picks the layout.
     async function measureRecordingVideoLayout(aspect, themed = false, parts = {}) {
@@ -1673,7 +1713,10 @@
                 if (Math.abs(next - width) < 0.5) break;
                 width = next;
             }
-            if (aspect < fitAspect) stage.style.height = `${stage.getBoundingClientRect().width / aspect}px`;
+            if (aspect < fitAspect) {
+                stage.style.height = `${stage.getBoundingClientRect().width / aspect}px`;
+                growRecordingVideoText(stage, panel, fitAspect / aspect);
+            }
 
             const origin = stage.getBoundingClientRect();
             const px = value => Number.parseFloat(value) || 0;
