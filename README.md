@@ -13,6 +13,10 @@ Original concept taken from the [Audio Recorder Plugin by mrwish7](https://githu
 
 Configuration options found in `pluginVideoRec.js`
 
+v1.4.1
+------
+* Added "16:9 Aspect Ratio" option to the right-click menu
+
 v1.4.0
 ------
 * Added "Metrics Monitor Style" option to the right-click menu

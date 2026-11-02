@@ -1,5 +1,5 @@
 /*
-    VideoRec v1.4.0 by AAD
+    VideoRec v1.4.1 by AAD
     ----------------------
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
@@ -31,12 +31,15 @@
         peakMode: 'dynamic',
         peakColorFixed: 'rgb(251, 174, 38)'
     };
-    // Per quality (right-click menu): video size, H.264 quantizer qp (0-51, lower = better quality, each +6 roughly
-    // halves the video part of the file) and full picture interval in ms. Used by both the browser's encoder and VideoRec's.
+    // Per quality (right-click menu): video size, its size with "16:9 Aspect Ratio", H.264 quantizer qp (0-51, lower = better
+    // quality, each +6 roughly halves the video part of the file) and full picture interval in ms. Used by both the browser's
+    // encoder and VideoRec's.
     const QUALITY_SETTINGS = {
-        high: { width: 1344, height: 576, qp: 18, keyframeIntervalMs: 4000 },
-        low: { width: 952, height: 408, qp: 24, keyframeIntervalMs: 8000 }
+        high: { width: 1344, height: 576, aspect169: { width: 1280, height: 720 }, qp: 18, keyframeIntervalMs: 4000 },
+        low: { width: 952, height: 408, aspect169: { width: 854, height: 480 }, qp: 24, keyframeIntervalMs: 8000 }
     };
+    // The panel's text only fits this wide for its height. A taller video keeps that width and gets taller rows instead.
+    const LAYOUT_MIN_ASPECT = 1344 / 576;
 
     // const plugin update checker variables
     const pluginVersion = '1.3.1';
@@ -53,6 +56,7 @@
     const AVERAGE_SIGNAL_KEY = 'videorec-average-signal';
     const METRICS_STYLE_KEY = 'videorec-metrics-style';
     const STATION_LOGO_KEY = 'videorec-station-logo';
+    const ASPECT_169_KEY = 'videorec-aspect-16-9';
     const QUICKTIME_COPY_KEY = 'videorec-quicktime-copy';
     // Started together, Safari keeps only the last download and Firefox reverses them.
     const QUICKTIME_COPY_DELAY_MS = 1000;
@@ -121,8 +125,8 @@
 .vr-time { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vr-users-icon { font-family: "Font Awesome 6 Free"; font-weight: 900; font-style: normal; }
-.vr-body { background: #000; }
-.vr-data { display: grid; gap: 8px; padding: 12px; color: #e5e7eb; }
+.vr-body { display: flex; flex: 1 1 auto; flex-direction: column; background: #000; }
+.vr-data { flex: 1 1 auto; display: grid; gap: 8px; padding: 12px; color: #e5e7eb; }
 .vr-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .vr-span-2 { grid-column: span 2; }
 .vr-span-4 { grid-column: span 4; }
@@ -338,6 +342,7 @@
     let averageSignal = loadAverageSignal();
     let metricsStyle = loadMetricsStyle();
     let stationLogo = loadStationLogo();
+    let aspect169 = loadAspect169();
     let quickTimeCopy = loadQuickTimeCopy();
     let preRollOn = loadPreRoll();
     let preRoll = null;
@@ -474,6 +479,21 @@
         } catch (_error) {}
     }
 
+    function loadAspect169() {
+        try {
+            return window.localStorage.getItem(ASPECT_169_KEY) === '1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function saveAspect169(value) {
+        aspect169 = value;
+        try {
+            window.localStorage.setItem(ASPECT_169_KEY, value ? '1' : '0');
+        } catch (_error) {}
+    }
+
     function loadQuickTimeCopy() {
         try {
             return window.localStorage.getItem(QUICKTIME_COPY_KEY) === '1';
@@ -581,6 +601,7 @@
             ['Include Timestamp', includeTimestamp, () => saveTimestamp(!includeTimestamp)],
             ['Average Signal', averageSignal, () => saveAverageSignal(!averageSignal)],
             ['High Quality', quality === 'high', () => saveQuality(quality === 'high' ? 'low' : 'high')],
+            ['16:9 Aspect Ratio', aspect169, () => saveAspect169(!aspect169)],
             ['QuickTime Compatible Copy', quickTimeCopy, () => saveQuickTimeCopy(!quickTimeCopy)]
         ];
         if (PRE_ROLL_ENABLED) items.push([`Pre-roll (${PRE_ROLL_SECONDS} sec)`, preRollOn, () => savePreRoll(!preRollOn)]);
@@ -1012,7 +1033,7 @@
         encoding = controller;
         setButton('busy', '0%');
         const settings = QUALITY_SETTINGS[quality] || QUALITY_SETTINGS.high;
-        const { width, height } = settings;
+        const { width, height } = aspect169 ? settings.aspect169 : settings;
         const timestampAt = includeTimestamp ? formatTimestamp : null;
         try {
             const startedAt = rec.audio[0][0];
@@ -1644,13 +1665,15 @@
             if (document.fonts?.load) await Promise.all([...fonts].map(font => document.fonts.load(font).catch(() => {})));
             if (document.fonts?.ready) await document.fonts.ready;
 
+            const fitAspect = Math.max(aspect, LAYOUT_MIN_ASPECT);
             let width = 800;
             for (let i = 0; i < 4; i++) {
                 stage.style.width = `${width}px`;
-                const next = stage.getBoundingClientRect().height * aspect;
+                const next = stage.getBoundingClientRect().height * fitAspect;
                 if (Math.abs(next - width) < 0.5) break;
                 width = next;
             }
+            if (aspect < fitAspect) stage.style.height = `${stage.getBoundingClientRect().width / aspect}px`;
 
             const origin = stage.getBoundingClientRect();
             const px = value => Number.parseFloat(value) || 0;
