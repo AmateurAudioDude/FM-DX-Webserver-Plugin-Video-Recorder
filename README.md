@@ -1,9 +1,10 @@
 # Video Recorder plugin for FM-DX Webserver
 
 This plugin adds a button to allow client-side video recordings to be made within FM-DX Webserver.  
-Original concept taken from the [Audio Recorder Plugin by mrwish7](https://github.com/mrwish7/webserver-audio-recorder).
+Original concept taken from the [Audio Recorder Plugin by mrwish7](https://github.com/mrwish7/webserver-audio-recorder).  
+Metrics Monitor design taken from the [Metrics Monitor plugin by Highpoint2000](https://github.com/Highpoint2000/MetricsMonitor).
 
-<img width="293" height="383" alt="video" src="https://github.com/user-attachments/assets/56191faf-eec5-4a19-bedf-7ade950bf4b6" />
+<img width="339" height="397" alt="VideoRec" src="https://github.com/user-attachments/assets/54259507-c1db-4a49-a1bc-dac5e648f7dc" />
 
 * [Download the latest zip file](https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder/archive/refs/heads/main.zip)
 * Extract `VideoRec` folder, and `VideoRec.js` to FM-DX Webserver `plugins` folder

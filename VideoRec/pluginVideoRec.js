@@ -4,7 +4,7 @@
     https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder
 
     Original concept taken from the Audio Recorder plugin by mrwish7: https://github.com/mrwish7/webserver-audio-recorder
-    Metrics Monitor design from the Metrics Monitor plugin by Highpoint2000: https://github.com/Highpoint2000/MetricsMonitor
+    Metrics Monitor design taken from the Metrics Monitor plugin by Highpoint2000: https://github.com/Highpoint2000/MetricsMonitor
 
     Records the server's MP3 audio stream together with the live signal, RDS and TX data, then saves both as an
     MP4 video of the data panel. Everything happens in the browser.
@@ -42,7 +42,7 @@
     const LAYOUT_MIN_ASPECT = 1344 / 576;
 
     // const plugin update checker variables
-    const pluginVersion = '1.3.1';
+    const pluginVersion = '1.4.1';
     const pluginName = "VideoRec";
     const pluginHomepageUrl = "https://github.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder";
     const pluginUpdateUrl = "https://raw.githubusercontent.com/AmateurAudioDude/FM-DX-Webserver-Plugin-Video-Recorder/refs/heads/main/VideoRec/pluginVideoRec.js";
